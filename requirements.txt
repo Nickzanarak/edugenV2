@@ -1,0 +1,23 @@
+fastapi
+uvicorn[standard]
+gunicorn
+python-multipart
+
+# Pydantic V2 + .env support
+pydantic
+pydantic-settings
+python-dotenv
+
+openai>=1.0.0
+
+# Firebase / Google Cloud
+firebase-admin
+google-cloud-firestore
+google-cloud-core
+google-api-core
+
+# PDF Processing
+pdfplumber
+reportlab
+
+requests
