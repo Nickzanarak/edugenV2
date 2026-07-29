@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -5,11 +6,16 @@ from fastapi import HTTPException
 from app.core.config import settings
 from app.services.ai_service import client
 from app.utils.nlp import filter_near_dups, similar
-from app.utils.text import safe_json_loads, truncate_text_chars
+from app.utils.chunking import chunk_page_range, sample_across_document
+from app.utils.chunking import build_chunks_semantic as build_chunks
+from app.utils.text import safe_json_loads
 
 
 class QuizService:
     CHOICE_LETTERS = ["ก", "ข", "ค", "ง", "จ", "ฉ"]
+
+    # จำนวนก้อนที่ยิง AI พร้อมกันตอนออกข้อสอบจากเอกสารยาว
+    QUIZ_MAP_CONCURRENCY = 4
 
     BANNED_PATTERNS = [
         "ทั้งหมดที่กล่าวมา", "ทุกข้อข้างต้น", "ถูกทุกข้อ", "ผิดทุกข้อ",
@@ -67,11 +73,11 @@ class QuizService:
 สกัดหัวข้อ/แนวคิดสำคัญจากเนื้อหาด้านล่าง (ไม่เกิน 30 หัวข้อ)
 ตอบ JSON: {{"topics":["หัวข้อ1","หัวข้อ2"]}}
 เนื้อหา:
-{truncate_text_chars(ctx, settings.CTX_CHAR_LIMIT)}
+{sample_across_document(ctx, settings.CTX_CHAR_LIMIT)}
 """
         try:
             r = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=settings.AI_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 response_format={"type": "json_object"},
@@ -114,6 +120,111 @@ class QuizService:
         difficulty: Optional[str] = "medium",
         choices_count: Optional[int] = 4,
     ) -> List[Dict[str, Any]]:
+        """ตัวกระจายงาน:
+        - เอกสารสั้น (ก้อนเดียว) -> ใช้วิธีเดิม ยิงรอบเดียว
+        - เอกสารยาว (หลายก้อน) -> แบ่งโควตาข้อไปตามก้อน แล้วออกข้อสอบจากทุกก้อน
+          เพื่อให้ข้อสอบครอบคลุมทั้งเอกสาร ไม่กระจุกอยู่ช่วงใดช่วงหนึ่ง
+        """
+        ctx = (context or "").strip()
+        if not ctx:
+            raise HTTPException(400, "context ว่าง")
+        count = max(1, min(15, int(n or 5)))
+
+        chunks = build_chunks(ctx)
+
+        # เอกสารสั้น -> ทางเดิม
+        if len(chunks) <= 1:
+            return QuizService._generate_from_text(
+                qtype, ctx, count, exclude, topics, difficulty, choices_count
+            )
+
+        # ---- เอกสารยาว: แบ่งโควตาข้อให้แต่ละก้อน ----
+        # ถ้าจำนวนข้อน้อยกว่าจำนวนก้อน ให้เลือกก้อนแบบกระจาย (ก้อนละ 1 ข้อ)
+        if count <= len(chunks):
+            step = len(chunks) / count
+            picked = [(int(i * step), 1) for i in range(count)]
+        else:
+            base = count // len(chunks)
+            remainder = count % len(chunks)
+            picked = [
+                (i, base + (1 if i < remainder else 0))
+                for i in range(len(chunks))
+            ]
+            picked = [(i, q) for i, q in picked if q > 0]
+
+        exclude_list = [str(x).strip() for x in (exclude or []) if str(x).strip()]
+        topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()]
+
+        def work(job):
+            idx, quota = job
+            # แบ่ง topic hints ให้แต่ละก้อนคนละส่วน กันออกข้อซ้ำหัวข้อกัน
+            hints = topic_list[idx::len(chunks)] if topic_list else None
+            try:
+                return QuizService._generate_from_text(
+                    qtype,
+                    chunks[idx],
+                    quota,
+                    exclude_list,
+                    hints,
+                    difficulty,
+                    choices_count,
+                    max_tries=3,   # ต่อก้อนไม่ต้องพยายามหนักเท่ากรณีก้อนเดียว
+                )
+            except Exception:
+                return []   # ก้อนเดียวพัง ไม่ให้ล้มทั้งคำขอ
+
+        with ThreadPoolExecutor(max_workers=QuizService.QUIZ_MAP_CONCURRENCY) as pool:
+            results = list(pool.map(work, picked))
+
+        # ---- รวมผล + กรองข้อซ้ำข้ามก้อน ----
+        collected: List[Dict[str, Any]] = []
+        for batch in results:
+            for q in batch:
+                if len(collected) >= count:
+                    break
+                if all(
+                    similar(str(q.get("question", "")), str(e.get("question", "")))
+                    < settings.NEAR_DUP_THRESHOLD
+                    for e in collected
+                ):
+                    collected.append(q)
+
+        # ---- ถ้ายังไม่ครบ (บางก้อนเนื้อหาบาง) เก็บตกจากก้อนที่ยาวที่สุด ----
+        if len(collected) < count:
+            need = count - len(collected)
+            richest = max(range(len(chunks)), key=lambda i: len(chunks[i]))
+            excludes_now = exclude_list + [str(q.get("question") or "") for q in collected]
+            try:
+                extra = QuizService._generate_from_text(
+                    qtype, chunks[richest], need, excludes_now, None,
+                    difficulty, choices_count, max_tries=3,
+                )
+                for q in extra:
+                    if len(collected) >= count:
+                        break
+                    if all(
+                        similar(str(q.get("question", "")), str(e.get("question", "")))
+                        < settings.NEAR_DUP_THRESHOLD
+                        for e in collected
+                    ):
+                        collected.append(q)
+            except Exception:
+                pass
+
+        return collected[:count]
+
+    @staticmethod
+    def _generate_from_text(
+        qtype: str,
+        context: str,
+        n: int,
+        exclude: Optional[List[str]],
+        topics: Optional[List[str]],
+        difficulty: Optional[str] = "medium",
+        choices_count: Optional[int] = 4,
+        max_tries: int = 6,
+    ) -> List[Dict[str, Any]]:
+        """ออกข้อสอบจากข้อความก้อนเดียว (ตรรกะเดิม) — ใช้ทั้งกรณีเอกสารสั้นและแต่ละก้อนของเอกสารยาว"""
         ctx = (context or "").strip()
         count = max(1, min(15, int(n or 5)))
         if not ctx:
@@ -125,7 +236,7 @@ class QuizService:
         collected: List[Dict[str, Any]] = []
         tries = 0
 
-        while len(collected) < count and tries < 6:
+        while len(collected) < count and tries < max_tries:
             need = count - len(collected)
             excludes_now = exclude_list + [str(q.get("question") or "") for q in collected]
             topic_hints = topic_list[:need] if topic_list else None
@@ -201,10 +312,10 @@ class QuizService:
 {difficulty_block}
 {topic_block}{exclude_block}
 เนื้อหา:
-{truncate_text_chars(ctx, settings.CTX_CHAR_LIMIT)}
+{sample_across_document(ctx, settings.CTX_CHAR_LIMIT)}
 """
         r = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=settings.AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             response_format={"type": "json_object"},
@@ -246,10 +357,10 @@ class QuizService:
 {difficulty_block}
 {topic_block}{exclude_block}
 เนื้อหา:
-{truncate_text_chars(ctx, settings.CTX_CHAR_LIMIT)}
+{sample_across_document(ctx, settings.CTX_CHAR_LIMIT)}
 """
         r = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=settings.AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.25,
             response_format={"type": "json_object"},

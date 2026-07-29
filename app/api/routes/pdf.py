@@ -4,6 +4,7 @@ import base64
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
+from app.core.config import settings
 from app.utils.text import clean_text
 from app.services.ai_service import client
 
@@ -13,7 +14,7 @@ router = APIRouter()
 IMAGE_AREA_THRESHOLD = 0.15
 # จำกัดจำนวนหน้าที่ยิง vision พร้อมกัน (กันยิงถล่ม API ทีเดียวจนโดน rate limit)
 VISION_CONCURRENCY = 5
-AI_MODEL = "gpt-4o-mini"
+AI_MODEL = settings.AI_MODEL
 
 
 def _page_has_large_image(page) -> bool:

@@ -3,10 +3,12 @@ from typing import List
 
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.services.ai_service import client
-from app.utils.chunking import build_chunk_index, build_chunks, chunk_page_range
+from app.utils.chunking import build_chunk_index, chunk_page_range
+from app.utils.chunking import build_chunks_semantic as build_chunks
 
-AI_MODEL = "gpt-4o-mini"
+AI_MODEL = settings.AI_MODEL
 # จำนวนก้อนสูงสุดที่จะหยิบมาตอบ 1 คำถาม
 MAX_PICKED_CHUNKS = 3
 
