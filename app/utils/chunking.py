@@ -14,7 +14,7 @@ MAX_PAGES_PER_CHUNK = 4
 # ความยาวตัวอย่างต่อหน้า ที่ส่งให้ AI ใช้หาขอบเขตเรื่อง
 TOPIC_PREVIEW_CHARS = 160
 # จำนวนก้อนสูงสุดหลังแบ่งตามเรื่อง (กันเอกสารที่มีหัวข้อย่อยเยอะเกินจนยิง AI หลายรอบ)
-MAX_SEMANTIC_GROUPS = 12
+MAX_SEMANTIC_GROUPS = 8
 # ความยาวตัวอย่างเนื้อหาที่ใช้ทำ "สารบัญ" ให้ AI เลือกก้อน
 INDEX_PREVIEW_CHARS = 400
 
@@ -223,7 +223,11 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
 
     key = _cache_key(text)
     if key in _TOPIC_CACHE:
+        print(f"[TIME] {'chunk: topic (cache)':<22} {0.0:7.2f}s | ใช้ผลเดิม", flush=True)
         return _TOPIC_CACHE[key]
+
+    import time as _time
+    _t0 = _time.perf_counter()
 
     try:
         from app.core.config import settings
@@ -271,6 +275,8 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
     if len(_TOPIC_CACHE) >= _TOPIC_CACHE_LIMIT:
         _TOPIC_CACHE.clear()
     _TOPIC_CACHE[key] = groups
+    print(f"[TIME] {'chunk: topic detect':<22} {_time.perf_counter()-_t0:7.2f}s "
+          f"| {len(pages)} หน้า -> {len(groups)} กลุ่ม", flush=True)
     return groups
 
 

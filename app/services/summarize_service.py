@@ -8,11 +8,12 @@ from app.core.config import settings
 from app.db.firebase import log_user_event
 from app.services.ai_service import client
 from app.utils.chunking import build_chunks_semantic as build_chunks
+from app.utils.timing import timed
 from app.utils.text import clean_text, numbered_sentences, safe_json_loads, truncate_text_chars
 
 AI_MODEL = settings.AI_MODEL
 # จำนวนก้อนที่ยิง AI พร้อมกัน (มากไปเสี่ยงโดน rate limit)
-MAP_CONCURRENCY = 4
+MAP_CONCURRENCY = 3
 
 
 class SummarizeService:
@@ -65,7 +66,7 @@ class SummarizeService:
   (ห้ามยัดหลายเรื่องไว้ใน title เดียว เช่น ห้ามรวมบริษัท A กับบริษัท B)
 
 ข้อกำหนดสำคัญ:
-- เก็บรายละเอียดให้ครบ: ตัวเลข ชื่อเฉพาะ นิยาม ขั้นตอน ตัวอย่าง ต้องไม่หาย
+- เก็บรายละเอียดสำคัญ: ตัวเลขหลัก ชื่อเฉพาะ นิยาม ข้อจำกัด — แต่ไม่ต้องถอดทุก field/ค่า config
 - ห้ามย่อจนเหลือแต่ใจความกว้าง ๆ
 - ครอบคลุมทุกหัวข้อที่ปรากฏ แม้หัวข้อนั้นจะมีเนื้อหาสั้นก็ต้องเก็บ
 - ถ้ามีคำอธิบายรูปภาพ/แผนภาพ ให้ถือเป็นเนื้อหาปกติ
@@ -95,8 +96,9 @@ class SummarizeService:
                 ],
                 "data_points": SummarizeService._clean_data_points(data.get("data_points", [])),
             }
-        except Exception:
-            # ก้อนเดียวพัง ไม่ให้ล้มทั้งไฟล์
+        except Exception as e:
+            # ก้อนเดียวพัง ไม่ให้ล้มทั้งไฟล์ — แต่ต้องพิมพ์ error ออกมา ไม่งั้นหาสาเหตุไม่เจอ
+            print(f"[ERROR] map chunk {idx}/{total} ล้มเหลว: {type(e).__name__}: {e}", flush=True)
             return {"sections": [], "key_points": [], "data_points": []}
 
     # ---------------- REDUCE: รวมสรุปย่อย ----------------
@@ -117,9 +119,9 @@ class SummarizeService:
         )
 
         # ปริมาณผลลัพธ์แปรผันตามความยาวเอกสาร
-        target_sections = max(5, min(16, total_chunks * 2))
-        overview_sentences = max(4, min(18, total_chunks * 3))
-        target_keys = max(8, min(24, target_sections * 2))
+        target_sections = max(4, min(8, total_chunks + 2))
+        overview_sentences = max(3, min(6, total_chunks + 1))
+        target_keys = max(6, min(12, target_sections + 2))
         topic_count = len(all_sections)
         min_sections = max(4, min(target_sections, int(topic_count * 0.4)))
 
@@ -131,8 +133,10 @@ class SummarizeService:
 - เอกสารนี้ยาว {total_chunks} ส่วน มีหัวข้อย่อยรวม {topic_count} หัวข้อ → ผลลัพธ์ต้องละเอียดตามขนาดนี้
 - overview ต้องยาวประมาณ {overview_sentences} ประโยค ห้ามสรุปสั้นกว่านี้
 - sections ต้องมีอย่างน้อย {min_sections} หัวข้อ (เป้าหมาย {target_sections} หัวข้อ)
-- แต่ละ section summary ต้องยาว 4-8 ประโยค ไม่ใช่ประโยคเดียว
-- ถ้า section ไหนเกิดจากการ "ยุบหลายหัวข้อย่อยเข้าด้วยกัน" summary ต้องยาว 8-15 ประโยค
+- แต่ละ section summary ต้องยาว 2-4 ประโยค ไม่ใช่ประโยคเดียว
+- ถ้า section ไหนเกิดจากการ "ยุบหลายหัวข้อย่อยเข้าด้วยกัน" summary ต้องยาว 4-6 ประโยค
+- ห้ามถอดรายละเอียดปลีกย่อยทุกตัว เช่น ชื่อ field ทุก field หรือค่า config ทุกค่า — เก็บเฉพาะประเด็นหลักที่ผู้อ่านต้องรู้
+- ถ้าเนื้อหาเป็นขั้นตอนปฏิบัติ (lab/tutorial) ให้สรุปเป็น "ทำอะไร → ได้ผลอะไร" ไม่ใช่ถอดทุกคำสั่ง
 - key_points ต้องมีประมาณ {target_keys} ข้อ และต้อง "กระจายครบทุกเรื่องหลัก" เรื่องละ 2-3 ข้อ
   ห้ามกระจุกอยู่เรื่องใดเรื่องหนึ่ง ห้ามหยิบมาแต่เรื่องท้ายเอกสาร
 
@@ -200,7 +204,8 @@ class SummarizeService:
                 for k in SummarizeService._norm_list(data.get("key_points", []))
                 if SummarizeService._norm_str(k)
             ]
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] reduce ล้มเหลว: {type(e).__name__}: {e}", flush=True)
             # ถ้า reduce พัง ใช้ผลรวมดิบแทน ดีกว่าไม่ได้อะไรเลย
             sections, keys = all_sections, all_keys
             data = {"overview": ""}
@@ -297,25 +302,31 @@ overview ต้องกล่าวถึงทุกเรื่องหล�
             raise HTTPException(400, "context ว่าง")
 
         ctx = clean_text(ctx_raw)  # ไม่ตัดทิ้งแล้ว — ใช้ทั้งเอกสาร
-        chunks = build_chunks(ctx)
+        print(f"[TIME] {'--- summarize เริ่ม':<22} {'':>7}  | {len(ctx)} ตัวอักษร", flush=True)
+        with timed("sum: chunking", ""):
+            chunks = build_chunks(ctx)
         if not chunks:
             raise HTTPException(422, "เอกสารสั้นเกินไป")
 
         try:
             if len(chunks) == 1:
                 # เอกสารสั้น — ใช้วิธีเดิม (คุณภาพดีที่สุดสำหรับไฟล์เล็ก)
-                result = SummarizeService._summarize_single(chunks[0])
+                with timed("sum: single", f"{len(ctx)} ตัวอักษร"):
+                    result = SummarizeService._summarize_single(chunks[0])
             else:
                 # เอกสารยาว — Map-Reduce
                 total = len(chunks)
-                with ThreadPoolExecutor(max_workers=MAP_CONCURRENCY) as pool:
-                    parts = list(
-                        pool.map(
-                            lambda t: SummarizeService._map_one_chunk(t[1], t[0], total),
-                            [(i + 1, c) for i, c in enumerate(chunks)],
+                with timed("sum: map", f"{total} ก้อน / พร้อมกัน {min(total, 10)}"):
+                    with ThreadPoolExecutor(max_workers=min(total, 10)) as pool:
+                        parts = list(
+                            pool.map(
+                                lambda t: SummarizeService._map_one_chunk(t[1], t[0], total),
+                                [(i + 1, c) for i, c in enumerate(chunks)],
+                            )
                         )
-                    )
-                result = SummarizeService._reduce(parts, total)
+                n_sec = sum(len(p.get("sections", [])) for p in parts)
+                with timed("sum: reduce", f"รวม {n_sec} หัวข้อย่อย"):
+                    result = SummarizeService._reduce(parts, total)
 
             log_user_event(
                 uid,

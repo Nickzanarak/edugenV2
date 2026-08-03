@@ -8,6 +8,7 @@ from app.services.ai_service import client
 from app.utils.nlp import filter_near_dups, similar
 from app.utils.chunking import chunk_page_range, sample_across_document
 from app.utils.chunking import build_chunks_semantic as build_chunks
+from app.utils.timing import timed
 from app.utils.text import safe_json_loads
 
 
@@ -173,8 +174,9 @@ class QuizService:
             except Exception:
                 return []   # ก้อนเดียวพัง ไม่ให้ล้มทั้งคำขอ
 
-        with ThreadPoolExecutor(max_workers=QuizService.QUIZ_MAP_CONCURRENCY) as pool:
-            results = list(pool.map(work, picked))
+        with timed("quiz: map", f"{len(picked)} ก้อน จาก {len(chunks)} ก้อน, ขอ {count} ข้อ"):
+            with ThreadPoolExecutor(max_workers=len(picked)) as pool:
+                results = list(pool.map(work, picked))
 
         # ---- รวมผล + กรองข้อซ้ำข้ามก้อน ----
         collected: List[Dict[str, Any]] = []

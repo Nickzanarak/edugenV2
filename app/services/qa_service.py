@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.core.config import settings
 from app.services.ai_service import client
 from app.utils.chunking import build_chunk_index, chunk_page_range
+from app.utils.timing import timed
 from app.utils.chunking import build_chunks_semantic as build_chunks
 
 AI_MODEL = settings.AI_MODEL
@@ -64,7 +65,8 @@ class QAService:
         else:
             # เอกสารยาว — ให้ AI เลือกก้อนที่เกี่ยวข้องก่อน แล้วค่อยส่ง "เนื้อหาเต็ม" ของก้อนนั้นไปตอบ
             index_text = build_chunk_index(chunks)
-            picked = QAService._pick_chunks(index_text, q, len(chunks))
+            with timed("qa: pick chunks", f"จาก {len(chunks)} ก้อน"):
+                picked = QAService._pick_chunks(index_text, q, len(chunks))
             selected = [chunks[i - 1] for i in picked]
             source_text = "\n\n".join(selected)
             ranges = ", ".join(chunk_page_range(c) for c in selected)
@@ -83,11 +85,12 @@ class QAService:
 ตอบ:
 """
         try:
-            res = client.chat.completions.create(
-                model=AI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.15,
-            )
+            with timed("qa: answer", f"{len(source_text)} ตัวอักษร"):
+                res = client.chat.completions.create(
+                    model=AI_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.15,
+                )
             answer_text = (res.choices[0].message.content or "").strip()
             return {"answer": answer_text, "source": source_note}
         except Exception as e:

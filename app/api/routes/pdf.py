@@ -6,6 +6,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 
 from app.core.config import settings
 from app.utils.text import clean_text
+from app.utils.timing import timed
 from app.services.ai_service import client
 
 router = APIRouter()
@@ -13,7 +14,7 @@ router = APIRouter()
 # หน้าไหนมีรูปที่กินพื้นที่เกินสัดส่วนนี้ของหน้า → ถือว่า "มีรูปที่มีเนื้อหา" → ส่งเข้า vision
 IMAGE_AREA_THRESHOLD = 0.15
 # จำกัดจำนวนหน้าที่ยิง vision พร้อมกัน (กันยิงถล่ม API ทีเดียวจนโดน rate limit)
-VISION_CONCURRENCY = 5
+VISION_CONCURRENCY = 8
 AI_MODEL = settings.AI_MODEL
 
 
@@ -57,7 +58,8 @@ def _describe_page_with_vision(png_b64: str, page_no: int) -> str:
                                 "1. คัดข้อความปกติออกมาให้ครบ\n"
                                 "2. อธิบายสิ่งที่อยู่ในรูป/ไดอะแกรม/กราฟ ว่าสื่อถึงอะไร มีองค์ประกอบ ป้ายกำกับ ความสัมพันธ์อะไรบ้าง\n"
                                 "3. เชื่อมโยงรูปกับคำบรรยายใต้/ข้างรูป (ถ้ามี)\n"
-                                "ตอบเป็นข้อความล้วน ไม่ต้องมีหัวข้อ ไม่ต้องเกริ่น"
+                                "ตอบเป็นข้อความล้วน ไม่ต้องมีหัวข้อ ไม่ต้องเกริ่น\n"
+                                "เขียนให้กระชับ ไม่เกิน 200 คำต่อหน้า เก็บเฉพาะสาระสำคัญ ห้ามบรรยายการออกแบบของภาพ"
                                 "4. ห้ามบรรยายลักษณะการออกแบบของภาพ (เช่น มีเส้นประ, ป้ายชัดเจน, เข้าใจง่าย) ให้ถอดเฉพาะ ความรู้/ข้อเท็จจริง ที่ภาพสื่อเท่านั้น\n"
                                 "5. ถ้าในภาพมีองค์ประกอบย่อยที่มีความหมาย ให้ระบุให้ครบทุกชิ้น อย่าข้าม"
                             ),
@@ -98,18 +100,21 @@ async def pdf_extract(pdf: UploadFile = File(...)):
     vision_jobs: list[tuple[int, str]] = []  # (page_index, png_b64)
 
     try:
+        _t_scan = __import__("time").perf_counter()
         for i in range(doc.page_count):
             page = doc.load_page(i)
             page_texts.append(page.get_text() or "")# type: ignore
             if _page_has_large_image(page):
                 vision_jobs.append((i, _render_page_png_b64(page)))
+        print(f"[TIME] {'pdf: scan+render':<22} {__import__('time').perf_counter()-_t_scan:7.2f}s "
+              f"| {doc.page_count} หน้า, ส่ง vision {len(vision_jobs)} หน้า", flush=True)
     except Exception:
         doc.close()
         raise HTTPException(422, "ไม่สามารถอ่านเนื้อหาในไฟล์ได้")
 
     # รอบที่ 2 — ยิง vision หลายหน้าพร้อมกัน (แบบเร็ว) โดยจำกัดจำนวนพร้อมกันด้วย semaphore
     if vision_jobs:
-        sem = asyncio.Semaphore(VISION_CONCURRENCY)
+        sem = asyncio.Semaphore(min(len(vision_jobs), 20))
 
         async def run_one(idx: int, b64: str):
             async with sem:
@@ -117,7 +122,8 @@ async def pdf_extract(pdf: UploadFile = File(...)):
                 desc = await asyncio.to_thread(_describe_page_with_vision, b64, idx)
                 return idx, desc
 
-        results = await asyncio.gather(*(run_one(i, b64) for i, b64 in vision_jobs))
+        with timed("pdf: vision", f"{len(vision_jobs)} หน้า / พร้อมกัน {min(len(vision_jobs), 20)}"):
+            results = await asyncio.gather(*(run_one(i, b64) for i, b64 in vision_jobs))
 
         # เอาผล vision ไปแทน text ปกติของหน้านั้น (ถ้า vision ได้ผลจริง)
         for idx, desc in results:

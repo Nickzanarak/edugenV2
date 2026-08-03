@@ -15,6 +15,8 @@ class Settings:
 
     # ชื่อโมเดล AI ที่ใช้ทั้งระบบ (เปลี่ยนที่เดียวมีผลทุกฟีเจอร์)
     AI_MODEL: str = os.getenv("AI_MODEL", "gpt-4o-mini")
+    # เวลารอสูงสุดต่อ 1 คำขอ AI (วินาที)
+    AI_TIMEOUT: float = float(os.getenv("AI_TIMEOUT", "90"))
 
     NEAR_DUP_THRESHOLD: float = 0.78
     CTX_CHAR_LIMIT: int = 30000
