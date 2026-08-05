@@ -294,6 +294,7 @@ overview ต้องกล่าวถึงทุกเรื่องหล�
             "data_points": SummarizeService._clean_data_points(ov_json.get("data_points", [])),
         }
 
+
     # ---------------- entry point ----------------
     @staticmethod
     def summarize(context: str, uid: str) -> Dict[str, Any]:
