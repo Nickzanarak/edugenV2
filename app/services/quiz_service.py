@@ -57,6 +57,43 @@ class QuizService:
         return max(4, min(6, c))
 
     @staticmethod
+    def _is_valid_mcq(q: Dict[str, Any], cc: int) -> bool:
+        """ตาข่ายกันพลาด: ตรวจว่าข้อสอบที่ AI ส่งมาใช้งานได้จริง
+        (prompt สั่งไปแล้วแต่ AI ไม่ทำตามได้เสมอ จึงต้องเช็คซ้ำที่โค้ด)
+        """
+        choices = q.get("choices") or []
+        if not isinstance(choices, list) or len(choices) != cc:
+            return False
+
+        # ตัวเลือกต้องไม่ว่างและไม่ซ้ำกันเอง
+        texts = []
+        for c in choices:
+            t = QuizService._strip_choice_prefix(str(c)).strip().lower()
+            if not t:
+                return False
+            texts.append(t)
+        if len(set(texts)) != len(texts):
+            return False
+
+        # answer ต้องเป็นตัวอักษรที่อยู่ในช่วงตัวเลือกจริง
+        ans = str(q.get("answer", "")).strip()
+        valid_letters = QuizService.CHOICE_LETTERS[:cc]
+        if ans not in valid_letters:
+            return False
+        return True
+
+    @staticmethod
+    def _strip_choice_prefix(text: str) -> str:
+        """ตัดหัวข้อแบบ 'ก) ' หรือ 'ก. ' ออก เพื่อเทียบเนื้อความจริง"""
+        t = text.strip()
+        for letter in QuizService.CHOICE_LETTERS:
+            for sep in (") ", ". ", ")", "."):
+                pre = letter + sep
+                if t.startswith(pre):
+                    return t[len(pre):]
+        return t
+
+    @staticmethod
     def _has_banned_choice(q: Dict[str, Any]) -> bool:
         for c in q.get("choices") or []:
             text = str(c).lower()
@@ -307,7 +344,20 @@ class QuizService:
 ห้ามสร้างตัวเลือกที่รวมตัวเลือกอื่น เช่น "ทั้งหมดที่กล่าวมา", "ถูกทุกข้อ", "ข้อ ก และ ข", "ไม่มีข้อใดถูก", "ทุกข้อข้างต้น" หรือข้อความใด ๆ ที่มีความหมายทำนองนี้ — เด็ดขาด ทุกกรณี
 ตัวเลือกทุกตัวต้องเป็นคำตอบที่เป็นอิสระต่อกัน และมีเพียงตัวเดียวที่ถูก
 
+*** ความถูกต้องของคำตอบ (สำคัญที่สุด) ***
+- คำตอบที่ถูกต้องจริง "ต้องปรากฏอยู่ในรายการตัวเลือก" เสมอ
+  ห้ามตั้งคำถามที่คำตอบจริงไม่ได้อยู่ในตัวเลือกใดเลย — ผู้สอบต้องตอบได้
+- ก่อนสรุปแต่ละข้อ ให้ตรวจว่า "ตัวเลือกที่ระบุใน answer คือคำตอบที่ถูกต้องจริง" ตามเนื้อหา
+- คำตอบต้องตรวจสอบย้อนกลับได้จากเนื้อหาที่ให้มาเท่านั้น ห้ามใช้ความรู้นอกเนื้อหา
+- ถ้าเนื้อหาไม่ได้ระบุคำตอบไว้ชัดเจน ให้เปลี่ยนไปถามประเด็นอื่นที่เนื้อหาระบุไว้ชัด
+
+*** คุณภาพของตัวเลือก ***
 - ตัวเลือกลวงทุกตัวต้องเกี่ยวข้องกับเนื้อหา ห้ามใส่ตัวเลือกที่ไม่มีความหมายเพื่อให้ครบจำนวน
+- ความยาวของทุกตัวเลือกต้องใกล้เคียงกัน ห้ามให้ข้อที่ถูกยาวกว่าข้ออื่นอย่างชัดเจน
+  (ไม่งั้นผู้สอบเดาได้จากความยาวโดยไม่ต้องอ่านเนื้อหา)
+- ตัวเลือกห้ามซ้ำกันเอง และห้ามมีสองตัวเลือกที่ความหมายเหมือนกัน
+- กระจายตำแหน่งคำตอบที่ถูกให้สม่ำเสมอ อย่าให้อยู่ตำแหน่งเดิมทุกข้อ
+- คำถามต้องอ่านเข้าใจได้ด้วยตัวเอง ห้ามอ้างถึงสิ่งที่ผู้สอบมองไม่เห็น เช่น "จากภาพด้านบน", "ตามตารางนี้"
 - ถ้าเนื้อหาไม่พอจะสร้างตัวเลือกลวงที่ดีครบ {cc} ตัว ให้เปลี่ยนไปตั้งคำถามจากแง่มุมอื่นของเนื้อหาแทน
 - ตอบ JSON: {{"questions":[{{"type":"mcq","question":"...","choices":[{choices_example}],"answer":"{answer_options}","explain":"...","topic":"..."}}]}}
 
@@ -323,7 +373,10 @@ class QuizService:
             response_format={"type": "json_object"},
         )
         data = safe_json_loads(r.choices[0].message.content, {"questions": []})
-        questions = [q for q in data.get("questions", []) if not QuizService._has_banned_choice(q)]
+        questions = [
+            q for q in data.get("questions", [])
+            if not QuizService._has_banned_choice(q) and QuizService._is_valid_mcq(q, cc)
+        ]
         return filter_near_dups(questions, exclude_list, threshold=settings.NEAR_DUP_THRESHOLD)
 
     @staticmethod

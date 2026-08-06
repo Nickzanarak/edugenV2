@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
-from app.db.firebase import fb_auth
+from app.db.firebase import fb_auth, save_user_profile
 
 security = HTTPBearer(auto_error=False)
 
@@ -21,6 +21,14 @@ def _verify_bearer_token(token: str) -> str:
         uid = (decoded.get("uid") or "").strip()
         if not uid:
             raise HTTPException(401, "Invalid auth token (no uid)")
+
+        # บันทึกอีเมล/ชื่อลงเอกสารผู้ใช้ เพื่อให้ดูใน Firestore ได้ว่า UID นี้คือใคร
+        # (ไม่ให้ล้มถ้าบันทึกไม่สำเร็จ เพราะ auth สำคัญกว่า)
+        save_user_profile(
+            uid,
+            email=(decoded.get("email") or "").strip(),
+            name=(decoded.get("name") or "").strip(),
+        )
         return uid
     except HTTPException:
         raise

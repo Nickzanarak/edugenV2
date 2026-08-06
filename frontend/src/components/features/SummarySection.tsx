@@ -1,19 +1,21 @@
-import { Section } from "../../types";
+import { Section, DataPoint } from "../../types";
 
 export function SummarySection({
   overview,
   keyPoints,
-  sections
+  sections,
+  dataPoints = []
 }: {
   overview: string;
   keyPoints: string[];
   sections: Section[];
+  dataPoints?: DataPoint[];
 }) {
-  if (!overview && keyPoints.length === 0 && sections.length === 0) return null;
+  if (!overview && keyPoints.length === 0 && sections.length === 0 && dataPoints.length === 0) return null;
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-10">
-      
+
       {overview && overview.trim().length > 0 && (
         <div className="relative group">
           <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
@@ -72,6 +74,39 @@ export function SummarySection({
                 </p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {dataPoints.length > 0 && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            ตัวเลขสำคัญ
+          </h3>
+          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {dataPoints.map((d, i) => {
+              const value = String(d.value ?? "");
+              // ปรับขนาดฟอนต์ตามความยาวค่า เพื่อให้การ์ดสูงเท่ากันเสมอ
+              const size =
+                value.length <= 6 ? "text-2xl" : value.length <= 12 ? "text-lg" : "text-sm";
+              return (
+                <div
+                  key={i}
+                  className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 h-[112px] flex flex-col justify-between overflow-hidden hover:border-amber-500/30 hover:bg-zinc-800/40 transition-all"
+                >
+                  <div className="text-xs text-zinc-500 line-clamp-2 leading-snug" title={d.label}>
+                    {d.label}
+                  </div>
+                  <div className="flex items-baseline gap-1.5 min-w-0">
+                    <span className={`font-semibold text-zinc-100 leading-tight truncate ${size}`} title={value}>
+                      {value}
+                    </span>
+                    {d.unit && <span className="text-sm text-zinc-400 shrink-0">{d.unit}</span>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

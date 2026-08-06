@@ -707,7 +707,7 @@ export default function Home() {
 
               {error && <Card className="border-red-700/50 bg-red-900/20 text-red-200">{error}</Card>}
 
-              <SummarySection overview={overview} keyPoints={keyPoints} sections={sections} />
+              <SummarySection overview={overview} keyPoints={keyPoints} sections={sections} dataPoints={dataPoints} />
 
               <QuizSection
                 questions={questions}
