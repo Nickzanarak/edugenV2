@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from app.core.config import settings
 from app.services.ai_service import client
 from app.utils.nlp import filter_near_dups, similar
-from app.utils.chunking import chunk_page_range, sample_across_document
+from app.utils.chunking import sample_across_document
 from app.utils.chunking import build_chunks_semantic as build_chunks
 from app.utils.timing import timed
 from app.utils.text import safe_json_loads
@@ -14,9 +14,6 @@ from app.utils.text import safe_json_loads
 
 class QuizService:
     CHOICE_LETTERS = ["ก", "ข", "ค", "ง", "จ", "ฉ"]
-
-    # จำนวนก้อนที่ยิง AI พร้อมกันตอนออกข้อสอบจากเอกสารยาว
-    QUIZ_MAP_CONCURRENCY = 4
 
     BANNED_PATTERNS = [
         "ทั้งหมดที่กล่าวมา", "ทุกข้อข้างต้น", "ถูกทุกข้อ", "ผิดทุกข้อ",

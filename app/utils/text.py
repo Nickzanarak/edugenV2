@@ -28,10 +28,3 @@ def numbered_sentences(text: str, max_sentences: int = 800):
     sents = sentences(text)
     sents = sents[:max_sentences]
     return [{"id": i, "text": t} for i, t in enumerate(sents, start=1)]
-
-def truncate_text_chars(text: str, max_chars: int = 45000) -> str:
-    text = text or ""
-    if len(text) <= max_chars:
-        return text  
-    else:
-        return text[:max_chars]

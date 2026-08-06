@@ -9,11 +9,9 @@ from app.db.firebase import log_user_event
 from app.services.ai_service import client
 from app.utils.chunking import build_chunks_semantic as build_chunks
 from app.utils.timing import timed
-from app.utils.text import clean_text, numbered_sentences, safe_json_loads, truncate_text_chars
+from app.utils.text import clean_text, numbered_sentences, safe_json_loads
 
 AI_MODEL = settings.AI_MODEL
-# จำนวนก้อนที่ยิง AI พร้อมกัน (มากไปเสี่ยงโดน rate limit)
-MAP_CONCURRENCY = 3
 
 
 class SummarizeService:

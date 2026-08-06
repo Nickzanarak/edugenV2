@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Path, Depends
 from pydantic import BaseModel

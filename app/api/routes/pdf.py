@@ -13,8 +13,6 @@ router = APIRouter()
 
 # หน้าไหนมีรูปที่กินพื้นที่เกินสัดส่วนนี้ของหน้า → ถือว่า "มีรูปที่มีเนื้อหา" → ส่งเข้า vision
 IMAGE_AREA_THRESHOLD = 0.15
-# จำกัดจำนวนหน้าที่ยิง vision พร้อมกัน (กันยิงถล่ม API ทีเดียวจนโดน rate limit)
-VISION_CONCURRENCY = 8
 AI_MODEL = settings.AI_MODEL
 
 

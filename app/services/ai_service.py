@@ -9,7 +9,3 @@ client = OpenAI(
     timeout=settings.AI_TIMEOUT,
     max_retries=1,
 )
-
-
-def get_openai_client():
-    return client
