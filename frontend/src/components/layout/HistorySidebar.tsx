@@ -25,17 +25,16 @@ export const HistorySidebar = ({
           <div
             key={item.id}
             onClick={() => onSelect(item)}
-            className={`group rounded-xl border p-3 transition-all duration-200 cursor-pointer flex flex-col gap-2 ${
-              isActive 
-                ? "bg-zinc-800/60 border-indigo-500/40 shadow-[0_0_15px_rgba(99,102,241,0.05)]" 
+            className={`group rounded-xl border p-3 transition-all duration-200 cursor-pointer flex flex-col gap-2 ${isActive
+                ? "bg-zinc-800/60 border-indigo-500/40 shadow-[0_0_15px_rgba(99,102,241,0.05)]"
                 : "bg-zinc-900/40 border-zinc-800/60 hover:bg-zinc-800/40 hover:border-zinc-700/80"
-            }`}
+              }`}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="font-medium text-sm text-zinc-200 truncate flex-1 leading-relaxed" title={item.fileName}>
                 {item.fileName}
               </div>
-              
+
               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -mt-1 -mr-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); onRename(item.id, item.fileName); }}
@@ -62,10 +61,12 @@ export const HistorySidebar = ({
                     {item.score}/{item.totalQuestions}
                   </span>
                 ) : (
-                  <span className="text-zinc-500 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">รอสอบ</span>
+                  // มีข้อสอบแล้วแต่ยังไม่ได้ส่งคำตอบ
+                  <span className="text-zinc-500 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">ยังไม่ได้ทำ</span>
                 )
               ) : (
-                <span className="text-zinc-500 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">รอสอบ</span>
+                // ประวัตินี้มีแต่บทสรุป ยังไม่ได้สร้างข้อสอบ
+                <span className="text-zinc-500 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">สรุปอย่างเดียว</span>
               )}
             </div>
           </div>

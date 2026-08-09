@@ -169,7 +169,6 @@ export function BankPanel({
         open={saveOpen.open}
         onClose={() => setSaveOpen({ open: false, qIndex: null })}
         title="บันทึกข้อสอบลงชุด"
-        rightInfo={<button className="text-indigo-300 hover:underline" onClick={() => loadSets()}>รีเฟรช</button>}
       >
         <div className="space-y-3">
           {saveOpen.qIndex !== null && questions[saveOpen.qIndex] && (
@@ -290,7 +289,7 @@ export function BankPanel({
         </div>
       </Modal>
 
-      <Modal open={manualOpen} onClose={() => setManualOpen(false)} title="เพิ่มข้อสอบเองลงชุด" rightInfo={<button className="text-indigo-300 hover:underline" onClick={() => loadSets()}>รีเฟรชเซ็ต</button>}>
+      <Modal open={manualOpen} onClose={() => setManualOpen(false)} title="เพิ่มข้อสอบเองลงชุด">
         <div className="space-y-3">
           <div className="flex gap-2">
             <select className="rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2" value={manualSetId ?? ""} onChange={(e) => setManualSetId(e.target.value ? Number(e.target.value) : null)}>
@@ -392,7 +391,6 @@ export function BankPanel({
         open={editOpen.open}
         onClose={() => setEditOpen({ open: false, set: null })}
         title={`แก้รายการในชุด: ${editOpen.set?.title ?? ""}`}
-        rightInfo={<button className="text-indigo-300 hover:underline" onClick={() => { loadBank(); loadSets(); }}>รีเฟรช</button>}
       >
         {!editOpen.set ? (
           <div className="text-sm text-zinc-400">ไม่พบชุด</div>
