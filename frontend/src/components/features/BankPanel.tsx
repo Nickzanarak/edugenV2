@@ -13,6 +13,7 @@ type Props = BankState & {
 };
 
 const MIN_CHOICES = 4;
+const MAX_CHOICES = 6;
 
 function EditQuestionRow({
   originalQ, index, onRemove, onSave
@@ -43,6 +44,12 @@ function EditQuestionRow({
       newAns = idxToLetter[ansIdx - 1]; // เฉลยอยู่หลังช่องที่ลบ → เลื่อนขึ้น 1
     }
     setQ({ ...q, choices: arr, answer: newAns });
+  };
+
+  // เพิ่มตัวเลือกใหม่ต่อท้าย (สูงสุด 6 ช่อง)
+  const addChoice = () => {
+    if (choices.length >= MAX_CHOICES) return;
+    setQ({ ...q, choices: [...choices, ""] });
   };
 
   return (
@@ -92,7 +99,16 @@ function EditQuestionRow({
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {choices.length < MAX_CHOICES && (
+              <button
+                type="button"
+                onClick={addChoice}
+                className="text-xs px-3 py-2 rounded-xl bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600/20 border border-indigo-500/20 transition"
+              >
+                + เพิ่มตัวเลือก
+              </button>
+            )}
             <span className="text-[13px] text-zinc-400 shrink-0">เฉลย:</span>
             <select
               className={`rounded-xl bg-zinc-900 border px-3 py-2 ${q.answer ? "border-zinc-800" : "border-amber-500/50 text-amber-400"}`}
@@ -335,7 +351,16 @@ export function BankPanel({
                   </div>
                 ))}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {manualChoices.length < MAX_CHOICES && (
+                  <button
+                    type="button"
+                    onClick={() => setManualChoices([...manualChoices, ""])}
+                    className="text-xs px-3 py-2 rounded-xl bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600/20 border border-indigo-500/20 transition"
+                  >
+                    + เพิ่มตัวเลือก
+                  </button>
+                )}
                 <span className="text-[13px] text-zinc-400 shrink-0">เฉลย:</span>
                 <select
                   className={`rounded-xl bg-zinc-900 border px-3 py-2 ${manualAns ? "border-zinc-800" : "border-amber-500/50 text-amber-400"}`}
