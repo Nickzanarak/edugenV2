@@ -15,6 +15,9 @@ import { Label } from "../src/components/ui/Label";
 import { PrimaryBtn } from "../src/components/ui/PrimaryBtn";
 import { Modal } from "../src/components/ui/Modal";
 import { HistorySidebar } from "../src/components/layout/HistorySidebar";
+import { useToast } from "../src/components/ui/Toast";
+import { PromptModal } from "../src/components/ui/PromptModal";
+import { ConfirmModal } from "../src/components/ui/ConfirmModal";
 import { useTypewriter } from "../src/hooks/useTypewriter";
 import { useQuiz } from "../src/hooks/useQuiz";
 import { useBank } from "../src/hooks/useBank";
@@ -98,21 +101,17 @@ export default function Home() {
   }, [invalidateHistory]);
 
   const [loadingText, setLoadingText] = useState<string>("");
+  const { showToast } = useToast();
+  // popup เปลี่ยนชื่อ / ยืนยันลบประวัติ (ใช้แทน prompt/confirm ของเบราว์เซอร์)
+  const [renameHistoryTarget, setRenameHistoryTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteHistoryTarget, setDeleteHistoryTarget] = useState<string | null>(null);
 
   const deleteHistory = async (id: string) => {
-    if (!confirm("ต้องการลบประวัตินี้ใช่หรือไม่?")) return;
-    try {
-      await deleteHistoryMutation.mutateAsync(id);
-      if (currentHistoryId === id) handleNewSession();
-    } catch { alert("ลบไม่สำเร็จ"); }
+    setDeleteHistoryTarget(id);
   };
 
   const renameHistory = async (id: string, currentName: string) => {
-    const newName = prompt("ตั้งชื่อประวัติใหม่:", currentName);
-    if (!newName || newName.trim() === currentName) return;
-    try {
-      await renameHistoryMutation.mutateAsync({ id, name: newName.trim() });
-    } catch { alert("เปลี่ยนชื่อไม่สำเร็จ"); }
+    setRenameHistoryTarget({ id, name: currentName });
   };
 
 
@@ -343,6 +342,7 @@ export default function Home() {
     askQA(context, {
       setError,
       setLoading,
+      onNotice: (msg) => showToast(msg, "error"),
       onAnswered: async (newHistory) => {
         if (!canUseProtectedApi(!!currentUser)) return;
         if (currentHistoryId) {
@@ -758,6 +758,47 @@ export default function Home() {
         {...bank}
         questions={questions}
         onError={setError}
+      />
+
+      <PromptModal
+        open={!!renameHistoryTarget}
+        title="ตั้งชื่อประวัติใหม่"
+        label="ชื่อประวัติ"
+        defaultValue={renameHistoryTarget?.name ?? ""}
+        onCancel={() => setRenameHistoryTarget(null)}
+        onConfirm={async (newName) => {
+          if (!renameHistoryTarget) return;
+          const target = renameHistoryTarget;
+          setRenameHistoryTarget(null);
+          if (newName === target.name) return;
+          try {
+            await renameHistoryMutation.mutateAsync({ id: target.id, name: newName });
+            showToast("เปลี่ยนชื่อแล้ว");
+          } catch {
+            showToast("เปลี่ยนชื่อไม่สำเร็จ", "error");
+          }
+        }}
+      />
+
+      <ConfirmModal
+        open={!!deleteHistoryTarget}
+        title="ลบประวัติ"
+        message="ต้องการลบประวัตินี้ใช่หรือไม่? เมื่อลบแล้วจะไม่สามารถกู้คืนได้"
+        confirmText="ลบ"
+        danger
+        onCancel={() => setDeleteHistoryTarget(null)}
+        onConfirm={async () => {
+          const id = deleteHistoryTarget;
+          if (!id) return;
+          setDeleteHistoryTarget(null);
+          try {
+            await deleteHistoryMutation.mutateAsync(id);
+            if (currentHistoryId === id) handleNewSession();
+            showToast("ลบประวัติแล้ว");
+          } catch {
+            showToast("ลบไม่สำเร็จ", "error");
+          }
+        }}
       />
     </div>
   );

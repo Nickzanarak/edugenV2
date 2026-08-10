@@ -28,7 +28,16 @@ export function QuizSection({
   onSubmit,
   onSaveQuestion,
 }: Props) {
-  if (questions.length === 0) return null;
+  if (questions.length === 0) {
+    return (
+      <Card>
+        <div className="px-6 py-8 text-center">
+          <div className="text-zinc-500 text-sm">ยังไม่มีข้อสอบ</div>
+          <div className="text-zinc-600 text-xs mt-1">กดปุ่ม &quot;ปรนัย&quot; หรือ &quot;ถูก/ผิด&quot; ด้านบนเพื่อให้ระบบสร้างข้อสอบจากเนื้อหา</div>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>

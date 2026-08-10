@@ -4,6 +4,9 @@ import type { useBank } from "../../hooks/useBank";
 import { idxToLetter } from "../../utils/helpers";
 import { Modal } from "../ui/Modal";
 import { PrimaryBtn } from "../ui/PrimaryBtn";
+import { useToast } from "../ui/Toast";
+import { PromptModal } from "../ui/PromptModal";
+import { ConfirmModal } from "../ui/ConfirmModal";
 
 type BankState = ReturnType<typeof useBank>;
 
@@ -23,6 +26,7 @@ function EditQuestionRow({
   onRemove: () => void;
   onSave: (updatedQ: BankQuestion) => Promise<void>;
 }) {
+  const { showToast } = useToast();
   const [q, setQ] = useState(originalQ);
 
   useEffect(() => {
@@ -56,7 +60,7 @@ function EditQuestionRow({
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 text-sm space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <label className="block text-[13px] text-zinc-400 mb-1">ข้อที่ {index + 1}</label>
+          <label className="block text-sm text-zinc-400 mb-1">ข้อที่ {index + 1}</label>
           <input
             className="w-full rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2 font-medium text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
             value={q.question}
@@ -109,7 +113,7 @@ function EditQuestionRow({
                 + เพิ่มตัวเลือก
               </button>
             )}
-            <span className="text-[13px] text-zinc-400 shrink-0">เฉลย:</span>
+            <span className="text-sm text-zinc-400 shrink-0">เฉลย:</span>
             <select
               className={`rounded-xl bg-zinc-900 border px-3 py-2 ${q.answer ? "border-zinc-800" : "border-amber-500/50 text-amber-400"}`}
               value={q.answer}
@@ -141,14 +145,14 @@ function EditQuestionRow({
           className="bg-emerald-700 hover:bg-emerald-600"
           onClick={async () => {
             if (isMcq && !q.answer) {
-              alert(`ข้อที่ ${index + 1} ยังไม่ได้เลือกเฉลย กรุณาเลือกเฉลยก่อนบันทึก`);
+              showToast(`ข้อที่ ${index + 1} ยังไม่ได้เลือกเฉลย`, "error");
               return;
             }
             try {
               await onSave(q);
-              alert("บันทึกแล้ว");
+              showToast("บันทึกแล้ว");
             } catch {
-              alert("บันทึกไม่สำเร็จ");
+              showToast("บันทึกไม่สำเร็จ", "error");
             }
           }}
         >
@@ -179,6 +183,11 @@ export function BankPanel({
   createSet, renameSet, deleteSet,
   exportSetPdf, saveQuestionToSet, updateBankQuestion,
 }: Props) {
+  const { showToast } = useToast();
+  // popup แก้ชื่อชุด / ยืนยันลบ (ใช้แทน prompt/confirm ของเบราว์เซอร์)
+  const [renameTarget, setRenameTarget] = useState<{ id: number; title: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
+
   return (
     <>
       <Modal
@@ -205,10 +214,10 @@ export function BankPanel({
                   const q = questions[saveOpen.qIndex];
                   try {
                     await saveQuestionToSet(s.id, q);
-                    alert(`บันทึกข้อนี้ลงชุด "${s.title}" เรียบร้อยแล้ว`);
+                    showToast(`บันทึกลงชุด "${s.title}" แล้ว`);
                     setSaveOpen({ open: false, qIndex: null });
                   } catch (e) {
-                    alert(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+                    showToast(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ", "error");
                   }
                 }}
               >
@@ -266,10 +275,7 @@ export function BankPanel({
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <button
                       className="text-xs px-3 py-2 rounded-xl bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700 hover:text-white transition border border-zinc-700/50"
-                      onClick={async () => {
-                        const name = prompt("แก้ไขชื่อชุดข้อสอบ:", s.title) || s.title;
-                        await renameSet(s.id, name);
-                      }}
+                      onClick={() => setRenameTarget({ id: s.id, title: s.title })}
                     >
                       แก้ชื่อ
                     </button>
@@ -293,7 +299,7 @@ export function BankPanel({
                     </button>
                     <button
                       className="text-xs px-3 py-2 rounded-xl bg-red-600/10 text-red-400 hover:bg-red-600/20 hover:text-red-300 transition border border-red-500/20"
-                      onClick={async () => { if (confirm("ต้องการลบชุดนี้ใช่หรือไม่?")) await deleteSet(s.id); }}
+                      onClick={() => setDeleteTarget({ id: s.id, title: s.title })}
                     >
                       ลบ
                     </button>
@@ -361,7 +367,7 @@ export function BankPanel({
                     + เพิ่มตัวเลือก
                   </button>
                 )}
-                <span className="text-[13px] text-zinc-400 shrink-0">เฉลย:</span>
+                <span className="text-sm text-zinc-400 shrink-0">เฉลย:</span>
                 <select
                   className={`rounded-xl bg-zinc-900 border px-3 py-2 ${manualAns ? "border-zinc-800" : "border-amber-500/50 text-amber-400"}`}
                   value={manualAns}
@@ -386,9 +392,9 @@ export function BankPanel({
           <div className="flex justify-end">
             <PrimaryBtn
               onClick={async () => {
-                if (!manualSetId) { alert("กรุณาเลือกชุดที่จะเพิ่มก่อน"); return; }
-                if (!manualQ.trim()) { alert("กรุณาพิมพ์คำถาม"); return; }
-                if (manualType === "mcq" && !manualAns) { alert("กรุณาเลือกเฉลยก่อนบันทึก"); return; }
+                if (!manualSetId) { showToast("กรุณาเลือกชุดที่จะเพิ่มก่อน", "error"); return; }
+                if (!manualQ.trim()) { showToast("กรุณาพิมพ์คำถาม", "error"); return; }
+                if (manualType === "mcq" && !manualAns) { showToast("กรุณาเลือกเฉลยก่อนบันทึก", "error"); return; }
                 const qi: QuizItem = manualType === "mcq"
                   ? { type: "mcq", question: manualQ.trim(), choices: manualChoices.map((x) => x.trim()), answer: manualAns, explain: manualExplain.trim() }
                   : { type: "tf", question: manualQ.trim(), answer: manualAns.toLowerCase() === "true" ? "true" : "false", explain: manualExplain.trim() };
@@ -400,9 +406,9 @@ export function BankPanel({
                   setManualChoices(["", "", "", ""]);
                   setManualAns(manualType === "mcq" ? "ก" : "true");
                   setManualExplain("");
-                  alert("เพิ่มข้อสอบแล้ว");
+                  showToast("เพิ่มข้อสอบแล้ว");
                 } catch (e) {
-                  alert(e instanceof Error ? e.message : "เกิดข้อผิดพลาดในการบันทึก");
+                  showToast(e instanceof Error ? e.message : "เกิดข้อผิดพลาดในการบันทึก", "error");
                 }
               }}
             >
@@ -469,6 +475,45 @@ export function BankPanel({
           </div>
         )}
       </Modal>
+
+      <PromptModal
+        open={!!renameTarget}
+        title="แก้ไขชื่อชุดข้อสอบ"
+        label="ชื่อชุดข้อสอบ"
+        defaultValue={renameTarget?.title ?? ""}
+        onCancel={() => setRenameTarget(null)}
+        onConfirm={async (name) => {
+          if (!renameTarget) return;
+          const target = renameTarget;
+          setRenameTarget(null);
+          try {
+            await renameSet(target.id, name);
+            showToast("เปลี่ยนชื่อแล้ว");
+          } catch {
+            showToast("เปลี่ยนชื่อไม่สำเร็จ", "error");
+          }
+        }}
+      />
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="ลบชุดข้อสอบ"
+        message={`ต้องการลบชุด "${deleteTarget?.title ?? ""}" ใช่หรือไม่? ข้อสอบในชุดจะไม่ถูกลบออกจากคลัง`}
+        confirmText="ลบ"
+        danger
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          try {
+            await deleteSet(target.id);
+            showToast("ลบชุดแล้ว");
+          } catch {
+            showToast("ลบไม่สำเร็จ", "error");
+          }
+        }}
+      />
     </>
   );
 }

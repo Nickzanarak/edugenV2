@@ -19,11 +19,13 @@ export function useQA() {
       setError: (e: string | null) => void;
       setLoading: (v: boolean) => void;
       onAnswered: (newHistory: QAPair[]) => Promise<void>;
+      /** แจ้งเตือนผู้ใช้ (ใช้ Toast แทน alert ของเบราว์เซอร์) */
+      onNotice?: (msg: string) => void;
     },
   ) => {
     if (!qaInput.trim()) return;
     if (!context) {
-      alert("⚠️ กรุณาอัปโหลดไฟล์ PDF หรือพิมพ์เนื้อหาในกล่องข้อความก่อนเริ่มถามครับ");
+      deps.onNotice?.("กรุณาอัปโหลดไฟล์ PDF หรือพิมพ์เนื้อหาก่อนเริ่มถาม");
       return;
     }
 

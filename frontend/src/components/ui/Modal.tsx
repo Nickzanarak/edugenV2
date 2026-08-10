@@ -1,17 +1,17 @@
 import { useEffect, ReactNode } from "react";
 
-export function Modal({ 
-  open, 
-  onClose, 
-  title, 
-  children, 
-  rightInfo 
-}: { 
-  open: boolean; 
-  onClose: () => void; 
-  title: string; 
-  children: ReactNode; 
-  rightInfo?: ReactNode; 
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  rightInfo
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  rightInfo?: ReactNode;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -19,9 +19,9 @@ export function Modal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-  
+
   if (!open) return null;
-  
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose} />
@@ -30,7 +30,7 @@ export function Modal({
           <div className="font-bold text-xl text-zinc-100">{title}</div>
           <div className="flex items-center gap-4 text-sm text-zinc-400">
             {rightInfo}
-            <button onClick={onClose} className="p-1.5 rounded-full hover:bg-zinc-800 hover:text-white transition-colors">
+            <button onClick={onClose} aria-label="ปิด" title="ปิด" className="p-1.5 rounded-full hover:bg-zinc-800 hover:text-white transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
           </div>

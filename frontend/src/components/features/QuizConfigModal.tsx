@@ -18,8 +18,8 @@ function LevelIcon({ level, active }: { level: number; active: boolean }) {
                     key={lv}
                     style={{ height: `${lv * 33}%` }}
                     className={`w-[3px] rounded-full transition-colors ${lv <= level
-                            ? active ? "bg-indigo-300" : "bg-zinc-400"
-                            : active ? "bg-indigo-300/25" : "bg-zinc-700"
+                        ? active ? "bg-indigo-300" : "bg-zinc-400"
+                        : active ? "bg-indigo-300/25" : "bg-zinc-700"
                         }`}
                 />
             ))}
@@ -94,7 +94,7 @@ export function QuizConfigModal({
                     </button>
 
                     <h2 className="text-xl font-bold text-zinc-50">การตั้งค่าแบบทดสอบ</h2>
-                    <p className="mt-1 text-[13px] text-zinc-500">
+                    <p className="mt-1 text-sm text-zinc-500">
                         ปรับแต่งความยากและจำนวนข้อสำหรับ{TYPE_LABEL[type]}ของคุณ
                     </p>
 
@@ -109,17 +109,17 @@ export function QuizConfigModal({
                                         key={d.value}
                                         onClick={() => setDifficulty(d.value)}
                                         className={`rounded-2xl border px-2 py-3.5 text-center transition-all duration-150 ${active
-                                                ? "border-indigo-500/70 bg-indigo-500/[0.09]"
-                                                : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900"
+                                            ? "border-indigo-500/70 bg-indigo-500/[0.09]"
+                                            : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900"
                                             }`}
                                     >
                                         <div className="flex justify-center mb-2">
                                             <LevelIcon level={d.level} active={active} />
                                         </div>
-                                        <div className={`text-[13px] font-bold ${active ? "text-indigo-200" : "text-zinc-300"}`}>
+                                        <div className={`text-sm font-bold ${active ? "text-indigo-200" : "text-zinc-300"}`}>
                                             {d.label}
                                         </div>
-                                        <div className={`text-[10px] mt-0.5 leading-tight ${active ? "text-indigo-300/50" : "text-zinc-600"}`}>
+                                        <div className={`text-xs mt-0.5 leading-tight ${active ? "text-indigo-300/50" : "text-zinc-600"}`}>
                                             {d.desc}
                                         </div>
                                     </button>
@@ -133,7 +133,7 @@ export function QuizConfigModal({
                         <div className="mt-6">
                             <div className="flex items-baseline justify-between mb-3">
                                 <div className="text-sm font-semibold text-zinc-200">จำนวนตัวเลือก</div>
-                                <div className="text-[11px] text-zinc-500">ยิ่งเยอะยิ่งเดายาก</div>
+                                <div className="text-xs text-zinc-500">ยิ่งเยอะยิ่งเดายาก</div>
                             </div>
                             <div className="grid grid-cols-3 gap-2.5">
                                 {[4, 5, 6].map((c) => {
@@ -143,14 +143,14 @@ export function QuizConfigModal({
                                             key={c}
                                             onClick={() => setChoicesCount(c)}
                                             className={`rounded-2xl border px-2 py-3 text-center transition-all duration-150 ${active
-                                                    ? "border-indigo-500/70 bg-indigo-500/[0.09]"
-                                                    : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900"
+                                                ? "border-indigo-500/70 bg-indigo-500/[0.09]"
+                                                : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900"
                                                 }`}
                                         >
                                             <div className={`text-base font-bold ${active ? "text-indigo-200" : "text-zinc-300"}`}>
                                                 {c}
                                             </div>
-                                            <div className={`text-[10px] mt-0.5 ${active ? "text-indigo-300/50" : "text-zinc-600"}`}>
+                                            <div className={`text-xs mt-0.5 ${active ? "text-indigo-300/50" : "text-zinc-600"}`}>
                                                 ก – {["ง", "จ", "ฉ"][c - 4]}
                                             </div>
                                         </button>
@@ -164,7 +164,7 @@ export function QuizConfigModal({
                     <div className="mt-6">
                         <div className="flex items-baseline justify-between mb-3">
                             <div className="text-sm font-semibold text-zinc-200">จำนวนข้อ</div>
-                            <div className="text-[11px] text-zinc-500">สร้างได้อีก {maxCount} ข้อ</div>
+                            <div className="text-xs text-zinc-500">สร้างได้อีก {maxCount} ข้อ</div>
                         </div>
 
                         <div className="flex items-center gap-2.5">
@@ -206,8 +206,8 @@ export function QuizConfigModal({
                                         key={p}
                                         onClick={() => setCount(p)}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${count === p
-                                                ? "bg-indigo-500/15 border-indigo-500/50 text-indigo-300"
-                                                : "bg-zinc-900/40 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                                            ? "bg-indigo-500/15 border-indigo-500/50 text-indigo-300"
+                                            : "bg-zinc-900/40 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
                                             }`}
                                     >
                                         {p}
@@ -217,13 +217,13 @@ export function QuizConfigModal({
                         )}
 
                         {topicCount > 0 && !isOverTopics && (
-                            <p className="mt-2.5 text-[11px] text-zinc-600">
+                            <p className="mt-2.5 text-xs text-zinc-600">
                                 เนื้อหานี้มีประมาณ {topicCount} หัวข้อ · แนะนำไม่เกิน {topicCount} ข้อ
                             </p>
                         )}
 
                         {isOverTopics && (
-                            <div className="mt-2.5 flex gap-2 text-[11px] text-amber-400/90 bg-amber-500/[0.06] border border-amber-500/20 rounded-xl px-3 py-2 leading-relaxed">
+                            <div className="mt-2.5 flex gap-2 text-xs text-amber-400/90 bg-amber-500/[0.06] border border-amber-500/20 rounded-xl px-3 py-2 leading-relaxed">
                                 <span className="shrink-0">⚠</span>
                                 <span>
                                     เนื้อหามีประมาณ {topicCount} หัวข้อ — ขอ {count} ข้ออาจได้ไม่ครบ หรือมีคำถามคล้ายกัน
@@ -234,17 +234,17 @@ export function QuizConfigModal({
                 </div>
 
                 <div className="flex items-center justify-between gap-3 px-7 py-4 border-t border-zinc-800/70">
-                    <span className="text-[12px] text-zinc-600">รวมสูงสุด 15 ข้อต่อประเภท</span>
+                    <span className="text-xs text-zinc-600">รวมสูงสุด 15 ข้อต่อประเภท</span>
                     <div className="flex gap-2.5">
                         <button
                             onClick={onClose}
-                            className="px-4 py-2.5 rounded-xl text-[13px] font-semibold bg-zinc-100 text-zinc-900 hover:bg-white transition-all"
+                            className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-zinc-100 text-zinc-900 hover:bg-white transition-all"
                         >
                             ยกเลิก
                         </button>
                         <button
                             onClick={() => onConfirm({ count, difficulty, choicesCount })}
-                            className="px-4 py-2.5 rounded-xl text-[13px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all"
+                            className="px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all"
                         >
                             สร้างแบบทดสอบ
                         </button>

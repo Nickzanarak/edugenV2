@@ -32,6 +32,13 @@ export function QASection({ qaInput, qaHistory, loading, onInputChange, onAsk }:
         </button>
       </div>
 
+      {qaHistory.length === 0 && (
+        <div className="mt-6 rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 px-6 py-8 text-center">
+          <div className="text-zinc-500 text-sm">ยังไม่มีคำถาม</div>
+          <div className="text-zinc-600 text-xs mt-1">พิมพ์คำถามเกี่ยวกับเนื้อหาในช่องด้านบนได้เลย</div>
+        </div>
+      )}
+
       {qaHistory.length > 0 && (
         <div className="space-y-4 mt-6 animate-in fade-in duration-500">
           {qaHistory.map((item, idx) => (
@@ -49,7 +56,7 @@ export function QASection({ qaInput, qaHistory, loading, onInputChange, onAsk }:
                 <div className="flex-1 min-w-0">
                   <div className="text-zinc-300 leading-relaxed whitespace-pre-line font-light mt-0.5">{item.answer}</div>
                   {item.source && (
-                    <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900/70 border border-zinc-800 text-[11px] text-zinc-500">
+                    <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900/70 border border-zinc-800 text-xs text-zinc-500">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
