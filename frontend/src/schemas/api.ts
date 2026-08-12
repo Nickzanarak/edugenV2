@@ -74,8 +74,3 @@ export const QuizSetListSchema = z.array(QuizSetSchema);
 export const PdfExtractSchema = z.object({
   text: z.string().optional().default(""),
 });
-
-export const NoteSchema = z.object({
-  content: z.string().optional(),
-  updated_at: z.string().optional(),
-});

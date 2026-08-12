@@ -17,13 +17,6 @@ export type DataPoint = {
   unit?: string;
 };
 
-export type SummarizeResponse = {
-  overview: string;
-  key_points: string[];
-  sections: Section[];
-  data_points: DataPoint[];
-};
-
 export type QAPair = {
   question: string;
   answer: string;

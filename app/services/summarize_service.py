@@ -189,9 +189,6 @@ class SummarizeService:
         )
         # ส่ง data_points ดิบทั้งหมดให้ AI คัดเลือก (ตอนนี้ AI เห็นภาพรวมทั้งไฟล์แล้ว)
         dps_input = json.dumps(all_dps, ensure_ascii=False)
-        print(f"[DP] Map ดึงมาได้ {len(all_dps)} รายการ: "
-              + ", ".join(f"{d.get('label','')}={d.get('value','')}" for d in all_dps[:20]),
-              flush=True)
 
         # ปริมาณผลลัพธ์แปรผันตามความยาวเอกสาร
         target_sections = max(4, min(8, total_chunks + 2))
@@ -333,9 +330,6 @@ unit ต้องเป็น "หน่วยจริง" สั้น ๆ เ
 
         # ใช้ตัวที่ AI คัดมา ถ้าคัดไม่ได้ให้ใช้ของดิบแทน (กันหน้าว่าง)
         final_dps = picked_dps[:target_dps] if picked_dps else uniq_dps[:target_dps]
-        print(f"[DP] Reduce คัดเหลือ {len(final_dps)} รายการ (เพดาน {target_dps}): "
-              + ", ".join(f"{d.get('label','')}={d.get('value','')}" for d in final_dps),
-              flush=True)
 
         return {
             "overview": SummarizeService._norm_str(data.get("overview", "")),

@@ -1,5 +1,3 @@
-import { QuizItem } from "../types";
-
 export function hasArrayQuestions(x: unknown): x is { questions: unknown[] } {
   if (typeof x !== "object" || x === null) return false;
   const q = (x as { questions?: unknown }).questions;
@@ -29,6 +27,3 @@ export function shuffle<T>(arr: T[]) {
   }
   return a;
 }
-
-export const keyFor = (q: QuizItem) =>
-  q.question.normalize("NFKC").replace(/\s+/g, " ").replace(/[^\p{L}\p{N}\s]/gu, "").trim().toLowerCase();
