@@ -66,7 +66,6 @@ def _render_pdf_quiz(title: str, questions: List[Dict[str, Any]], opts: ExportOp
             out.append(cleaned)
         return out
     
-    import random
     for idx, q in enumerate(questions, start=1):
         qtext = str(q.get("question", "")).strip()
         qtype = (q.get("type", "mcq") or "").lower()
@@ -76,8 +75,6 @@ def _render_pdf_quiz(title: str, questions: List[Dict[str, Any]], opts: ExportOp
         else:
             ch_raw = q.get("choices") or []
             chs = _mcq_lines(ch_raw)
-            if opts.shuffleChoices:
-                random.shuffle(chs)
         for line in chs:
             story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;{line}", style_normal))
         if opts.showAnswers:

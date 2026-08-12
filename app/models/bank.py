@@ -24,5 +24,4 @@ class QuizOut(BaseModel):
     updated_at: str
 
 class ExportOpts(BaseModel):
-    shuffleChoices: bool = False
     showAnswers: bool = False

@@ -150,7 +150,7 @@ export function useBank(authHeader: AuthHeaders) {
   const exportSetPdf = useCallback(async (
     id: number,
     onError: (msg: string) => void,
-    opts = { shuffleChoices: false, showAnswers: false },
+    opts = { showAnswers: false },
   ) => {
     try {
       const r = await apiFetchBlob(`/export/quizzes/${id}`, { method: "POST", auth: authHeader, json: opts });
