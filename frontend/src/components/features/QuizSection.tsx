@@ -67,7 +67,9 @@ export function QuizSection({
                 <div className="flex flex-wrap items-center gap-2 md:self-start shrink-0">
                   {hasSelected && (
                     <span className="text-xs px-2 py-1 rounded bg-zinc-800 text-zinc-300">
-                      เลือก: <b>{String(selectedLetter).toUpperCase()}</b>
+                      เลือก: <b>{q.type === "tf"
+                        ? (String(selectedLetter).toLowerCase() === "true" ? "จริง" : "เท็จ")
+                        : String(selectedLetter)}</b>
                     </span>
                   )}
                   {showSaveButton && (
@@ -143,7 +145,11 @@ export function QuizSection({
 
               {isThisQuestionSubmitted && (
                 <div className="mt-4 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-sm ml-5">
-                  <div className="text-emerald-400 font-semibold mb-1">เฉลย: {String(q.answer).toUpperCase()}</div>
+                  <div className="text-emerald-400 font-semibold mb-1">
+                    เฉลย: {q.type === "tf"
+                      ? (String(q.answer).toLowerCase() === "true" ? "จริง" : "เท็จ")
+                      : String(q.answer)}
+                  </div>
                   {q.explain && <div className="text-zinc-400">{q.explain}</div>}
                 </div>
               )}

@@ -214,6 +214,12 @@ class BankService:
         if BankService.is_duplicate_in_set(uid, quiz_id, body.question):
             raise HTTPException(409, "ข้อนี้มีอยู่ในชุดนี้แล้ว")
 
+        # ตรวจว่าชุดยังอยู่จริงก่อนสร้างข้อสอบ
+        # (ถ้าสร้างก่อนแล้วหาชุดไม่เจอ จะได้ข้อสอบลอยค้างในคลังโดยไม่มีชุด)
+        quizzes = _read_list(uid, "quizzes")
+        if not any(int(qz.get("id", -1)) == quiz_id for qz in quizzes):
+            raise HTTPException(404, "Quiz not found")
+
         created = BankService.create_question(uid, body)
         quizzes = _read_list(uid, "quizzes")
 

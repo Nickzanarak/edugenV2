@@ -2,9 +2,9 @@ import { useCallback, useState } from "react";
 import { parseApi } from "../lib/validate";
 import { QAResponseSchema } from "../schemas/api";
 import type { QAPair } from "../types";
-import { apiFetch } from "../services/api";
+import { apiFetch, type AuthHeaders } from "../services/api";
 
-export function useQA() {
+export function useQA(authHeader: AuthHeaders) {
   const [qaInput, setQaInput] = useState("");
   const [qaHistory, setQaHistory] = useState<QAPair[]>([]);
 
@@ -36,6 +36,7 @@ export function useQA() {
     try {
       const raw = await apiFetch<unknown>("/qa", {
         method: "POST",
+        auth: authHeader,
         json: { context, question: currentQ },
       });
       const json = parseApi(QAResponseSchema, raw, "qa");
@@ -58,7 +59,7 @@ export function useQA() {
     } finally {
       deps.setLoading(false);
     }
-  }, [qaInput, qaHistory]);
+  }, [qaInput, qaHistory, authHeader]);
 
   return { qaInput, setQaInput, qaHistory, setQaHistory, resetQA, askQA };
 }

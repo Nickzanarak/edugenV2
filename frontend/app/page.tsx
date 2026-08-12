@@ -5,7 +5,7 @@ import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import { Section, DataPoint, QAPair, HistoryItem, QuizItem } from "../src/types";
 import { parseApi } from "../src/lib/validate";
 import { PdfExtractSchema, SummarizeResponseSchema } from "../src/schemas/api";
-import { apiFetch, buildAuthHeaders, canUseProtectedApi, isDemoAuthEnabled } from "../src/services/api";
+import { apiFetch, ApiError, buildAuthHeaders, canUseProtectedApi, isDemoAuthEnabled } from "../src/services/api";
 import {
   buildHistoryPayload,
 } from "../src/services/history";
@@ -18,6 +18,7 @@ import { HistorySidebar } from "../src/components/layout/HistorySidebar";
 import { useToast } from "../src/components/ui/Toast";
 import { PromptModal } from "../src/components/ui/PromptModal";
 import { ConfirmModal } from "../src/components/ui/ConfirmModal";
+import { LoginRequiredModal } from "../src/components/ui/LoginRequiredModal";
 import { useTypewriter } from "../src/hooks/useTypewriter";
 import { useQuiz } from "../src/hooks/useQuiz";
 import { useBank } from "../src/hooks/useBank";
@@ -105,6 +106,7 @@ export default function Home() {
   // popup เปลี่ยนชื่อ / ยืนยันลบประวัติ (ใช้แทน prompt/confirm ของเบราว์เซอร์)
   const [renameHistoryTarget, setRenameHistoryTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleteHistoryTarget, setDeleteHistoryTarget] = useState<string | null>(null);
+  const [loginRequired, setLoginRequired] = useState(false);
 
   const deleteHistory = async (id: string) => {
     setDeleteHistoryTarget(id);
@@ -169,14 +171,35 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  /** แปลง error จาก API เป็นข้อความที่ผู้ใช้เข้าใจ
+   *  ถ้าเป็น 401 (ยังไม่ได้เข้าสู่ระบบ) จะเปิด popup ชวนเข้าสู่ระบบแทน */
+  const handleApiError = useCallback((e: unknown) => {
+    if (e instanceof ApiError && e.status === 401) {
+      setLoginRequired(true);
+      return;
+    }
+    setError(e instanceof Error ? e.message : String(e));
+  }, []);
+
+  /** ใช้กับ hook ที่ส่งข้อความ error มาเป็น string
+   *  ถ้าเป็นข้อความจากการยืนยันตัวตน ให้เปิด popup ชวนเข้าสู่ระบบแทน */
+  const handleErrorText = useCallback((msg: string | null) => {
+    if (msg && /authentication|auth token|unauthorized|401/i.test(msg)) {
+      setLoginRequired(true);
+      setError(null);
+      return;
+    }
+    setError(msg);
+  }, []);
+
   const context = useMemo(() => {
     const manualInput = [text.trim(), pdfText.trim()].filter(Boolean).join("\n");
     return manualInput || hiddenContext;
   }, [text, pdfText, hiddenContext]);
 
-  const quiz = useQuiz(context);
+  const quiz = useQuiz(context, authHeader);
   const bank = useBank(authHeader);
-  const qa = useQA();
+  const qa = useQA(authHeader);
 
   const { resetQuiz, restoreFromHistory, questions, answers, score, lockedCount, countByType, handleAnswerChange, isOverallSubmitted, isAllAnswered, ensureTopics, addMoreQuiz, submitQuiz } = quiz;
   const { resetQA, setQaHistory, qaHistory, qaInput, setQaInput, askQA } = qa;
@@ -238,13 +261,13 @@ export default function Home() {
 
     try {
       const fd = new FormData(); fd.append("pdf", file);
-      const raw = await apiFetch<unknown>("/pdf/extract", { method: "POST", body: fd });
+      const raw = await apiFetch<unknown>("/pdf/extract", { method: "POST", auth: authHeader, body: fd });
       const json = parseApi(PdfExtractSchema, raw, "pdf extract");
       setPdfText(json.text);
       resetQuiz();
       await ensureTopics();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      handleApiError(e);
     } finally {
       setLoading(false);
       setLoadingText(""); // 🟢 ปิด Loading Overlay
@@ -331,16 +354,16 @@ export default function Home() {
     config: { count: number; difficulty: string; choicesCount: number },
   ) => {
     addMoreQuiz(type, config, {
-      setError,
+      setError: handleErrorText,
       setLoading,
       setLoadingText,
       onUpdated: persistQuizUpdate,
     });
-  }, [addMoreQuiz, persistQuizUpdate]);
+  }, [addMoreQuiz, persistQuizUpdate, handleErrorText]);
 
   const handleAskQA = useCallback(() => {
     askQA(context, {
-      setError,
+      setError: handleErrorText,
       setLoading,
       onNotice: (msg) => showToast(msg, "error"),
       onAnswered: async (newHistory) => {
@@ -464,7 +487,7 @@ export default function Home() {
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      handleApiError(e);
     } finally {
       setLoading(false);
       setLoadingText(""); // 🟢 ปิด Loading Overlay
@@ -778,6 +801,12 @@ export default function Home() {
             showToast("เปลี่ยนชื่อไม่สำเร็จ", "error");
           }
         }}
+      />
+
+      <LoginRequiredModal
+        open={loginRequired}
+        onClose={() => setLoginRequired(false)}
+        onLogin={() => { setLoginRequired(false); setAuthOpen(true); }}
       />
 
       <ConfirmModal

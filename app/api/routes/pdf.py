@@ -2,9 +2,10 @@ import asyncio
 import base64
 
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 
 from app.core.config import settings
+from app.core.security import get_current_user
 from app.utils.text import clean_text
 from app.utils.timing import timed
 from app.services.ai_service import client
@@ -78,7 +79,7 @@ def _describe_page_with_vision(png_b64: str, page_no: int) -> str:
 
 
 @router.post("/extract")
-async def pdf_extract(pdf: UploadFile = File(...)):
+async def pdf_extract(pdf: UploadFile = File(...), uid: str = Depends(get_current_user)):
     if not (pdf.filename or "").lower().endswith(".pdf"):
         raise HTTPException(400, "รองรับเฉพาะไฟล์ .pdf เท่านั้น")
 

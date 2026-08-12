@@ -55,15 +55,25 @@ def _render_pdf_quiz(title: str, questions: List[Dict[str, Any]], opts: ExportOp
     )
     story = [Paragraph(title or "แบบทดสอบ", style_title), Spacer(1, 6)]
     def _mcq_lines(ch: List[str]):
+        """ใส่ตัวอักษรกำกับหน้าตัวเลือก (ก. ข. ค. ...)
+
+        ถ้าตัวเลือกมีตัวอักษรกำกับมาแล้ว (เช่น "ก) ..." หรือ "ก. ...") จะตัดของเดิมทิ้ง
+        แล้วใส่ใหม่ตามลำดับจริง เพื่อให้เรียงถูกเสมอ
+
+        หมายเหตุ: ต้องเช็คตัวคั่น ) หรือ . ด้วย ไม่ใช่เช็คแค่ตัวอักษรตัวแรก
+        เพราะคำไทยจำนวนมากขึ้นต้นด้วย ก ข ค ง จ ฉ (เช่น "การ", "ความ", "งาน", "จำนวน")
+        ซึ่งจะทำให้ระบบเข้าใจผิดว่ามีตัวอักษรกำกับอยู่แล้ว
+        """
         labels = ["ก", "ข", "ค", "ง", "จ", "ฉ"]
         items = [c for c in (ch or []) if str(c).strip()][:6]
+
+        # รูปแบบตัวอักษรกำกับที่ยอมรับ: "ก) ", "ก.", "ก ) " ฯลฯ
+        label_prefix = re.compile(r"^[" + "".join(labels) + r"]\s*[).]\s*")
+
         out = []
         for i, t in enumerate(items):
-            lab = labels[i]
-            cleaned = (t or "").strip()
-            if not cleaned.startswith(tuple(labels)):
-                cleaned = f"{lab}. {cleaned}"
-            out.append(cleaned)
+            cleaned = label_prefix.sub("", (t or "").strip())
+            out.append(f"{labels[i]}. {cleaned}")
         return out
     
     for idx, q in enumerate(questions, start=1):
@@ -86,8 +96,8 @@ def _render_pdf_quiz(title: str, questions: List[Dict[str, Any]], opts: ExportOp
         story.append(Spacer(1, 6))
         
     def _on_page(canvas, doc):
-        name = _load_th_font()
-        canvas.setFont(name, 12 if name != "Helvetica" else 10)
+        # ใช้ฟอนต์ที่โหลดไว้แล้วตอนต้น ไม่ต้องลงทะเบียนซ้ำทุกหน้า
+        canvas.setFont(font_name, 12 if font_name != "Helvetica" else 10)
         canvas.drawRightString(A4[0] - 18 * mm, 12 * mm, f"หน้า {doc.page}")
         
     doc.build(story, onFirstPage=_on_page, onLaterPages=_on_page)
@@ -101,7 +111,7 @@ def export_quiz_pdf(quiz_id: int, opts: ExportOpts = Body(...), uid: str = Depen
     qz = next((x for x in quizzes if int(x.get("id", -1)) == quiz_id), None)
     if not qz:
         raise HTTPException(404, "Quiz not found")
-    by_id = {int(q["id"]): q for q in questions}
+    by_id = {int(q["id"]): q for q in questions if "id" in q}
     bundle = [by_id[i] for i in qz.get("question_ids", []) if i in by_id]
     pdf_bytes = _render_pdf_quiz(qz.get("title", "แบบทดสอบ"), bundle, opts)
     raw_name = (qz.get("title", "quiz") or "quiz").strip()

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { HistoryItem, QuizItem } from "../types";
 import { normalizeFromAPI, shuffleAndRemapBatch } from "../services/api-helpers";
-import { apiFetch } from "../services/api";
+import { apiFetch, type AuthHeaders } from "../services/api";
 import { parseApi } from "../lib/validate";
 import { QuizApiResponseSchema, TopicsResponseSchema } from "../schemas/api";
 import { MAX_QUESTIONS } from "../constants/quiz";
@@ -12,7 +12,7 @@ export type QuizConfig = {
   choicesCount: number;
 };
 
-export function useQuiz(context: string) {
+export function useQuiz(context: string, authHeader: AuthHeaders) {
   const [questions, setQuestions] = useState<QuizItem[]>([]);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [score, setScore] = useState<number | null>(null);
@@ -62,6 +62,7 @@ export function useQuiz(context: string) {
     try {
       const raw = await apiFetch<unknown>("/quiz/topics", {
         method: "POST",
+        auth: authHeader,
         json: { context },
       });
       const json = parseApi(TopicsResponseSchema, raw, "quiz topics");
@@ -76,7 +77,7 @@ export function useQuiz(context: string) {
         }
       }
     } catch { /* optional */ }
-  }, [context]);
+  }, [context, authHeader]);
 
   const addMoreQuiz = useCallback(async (
     type: "mcq" | "tf",
@@ -108,6 +109,7 @@ export function useQuiz(context: string) {
 
       const raw = await apiFetch<unknown>(`/quiz/${type}`, {
         method: "POST",
+        auth: authHeader,
         json: {
           context,
           n: want,
@@ -136,7 +138,7 @@ export function useQuiz(context: string) {
       deps.setLoading(false);
       deps.setLoadingText("");
     }
-  }, [context, ensureTopics, questions]);
+  }, [context, ensureTopics, questions, authHeader]);
 
   const submitQuiz = useCallback(async (onSubmitted: (correct: number) => Promise<void>) => {
     let correct = 0;
