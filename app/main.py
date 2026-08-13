@@ -25,6 +25,15 @@ app.add_middleware(
 
 init_firebase(settings.FIREBASE_PROJECT_ID, settings.GOOGLE_APPLICATION_CREDENTIALS)
 
+# เตือนเมื่อเปิดโหมด demo — โหมดนี้ยอมให้ระบุตัวตนผ่าน header X-User-Id โดยไม่ตรวจสอบ
+# เหมาะกับการพัฒนาเท่านั้น ห้ามเปิดบนเครื่องที่เข้าถึงได้จากภายนอก
+if settings.ALLOW_DEMO_AUTH:
+    print("=" * 70)
+    print("[คำเตือน] ALLOW_DEMO_AUTH=true : ใครก็ตามที่ส่ง header X-User-Id")
+    print("          จะเข้าถึงข้อมูลของผู้ใช้รายนั้นได้โดยไม่ต้องยืนยันตัวตน")
+    print("          ก่อนนำขึ้นใช้งานจริง ให้ตั้ง ALLOW_DEMO_AUTH=false ใน .env")
+    print("=" * 70)
+
 app.include_router(health.router)
 app.include_router(pdf.router, prefix="/pdf", tags=["pdf"])
 app.include_router(summary.router, prefix="/summarize", tags=["summary"])

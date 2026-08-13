@@ -148,6 +148,10 @@ function EditQuestionRow({
               showToast(`ข้อที่ ${index + 1} ยังไม่ได้เลือกเฉลย`, "error");
               return;
             }
+            if (isMcq && choices.some((c) => !String(c ?? "").trim())) {
+              showToast(`ข้อที่ ${index + 1} มีตัวเลือกที่ยังไม่ได้กรอก`, "error");
+              return;
+            }
             try {
               await onSave(q);
               showToast("บันทึกแล้ว");
@@ -395,6 +399,9 @@ export function BankPanel({
                 if (!manualSetId) { showToast("กรุณาเลือกชุดที่จะเพิ่มก่อน", "error"); return; }
                 if (!manualQ.trim()) { showToast("กรุณาพิมพ์คำถาม", "error"); return; }
                 if (manualType === "mcq" && !manualAns) { showToast("กรุณาเลือกเฉลยก่อนบันทึก", "error"); return; }
+                if (manualType === "mcq" && manualChoices.some((c) => !c.trim())) {
+                  showToast("กรุณากรอกตัวเลือกให้ครบทุกช่อง", "error"); return;
+                }
                 const qi: QuizItem = manualType === "mcq"
                   ? { type: "mcq", question: manualQ.trim(), choices: manualChoices.map((x) => x.trim()), answer: manualAns, explain: manualExplain.trim() }
                   : { type: "tf", question: manualQ.trim(), answer: manualAns.toLowerCase() === "true" ? "true" : "false", explain: manualExplain.trim() };

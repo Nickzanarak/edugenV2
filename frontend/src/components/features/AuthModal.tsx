@@ -2,12 +2,29 @@ import { useState } from "react";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../../lib/firebase";
 
-export function AuthModal({ 
-  open, 
-  onClose 
-}: { 
-  open: boolean; 
-  onClose: () => void; 
+/** แปลรหัสข้อผิดพลาดของ Firebase เป็นข้อความภาษาไทยที่ผู้ใช้เข้าใจ */
+function translateAuthError(err: unknown): string {
+  const code = (err as { code?: string })?.code ?? "";
+  const messages: Record<string, string> = {
+    "auth/email-already-in-use": "อีเมลนี้ถูกใช้สมัครไปแล้ว ลองเข้าสู่ระบบแทน",
+    "auth/invalid-email": "รูปแบบอีเมลไม่ถูกต้อง",
+    "auth/weak-password": "รหัสผ่านสั้นเกินไป ต้องมีอย่างน้อย 6 ตัวอักษร",
+    "auth/wrong-password": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+    "auth/user-not-found": "ไม่พบบัญชีนี้ ลองสมัครสมาชิกก่อน",
+    "auth/invalid-credential": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+    "auth/too-many-requests": "ลองผิดหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่",
+    "auth/network-request-failed": "เชื่อมต่อไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่",
+    "auth/operation-not-allowed": "ระบบยังไม่เปิดให้สมัครด้วยอีเมล กรุณาติดต่อผู้ดูแล",
+  };
+  return messages[code] ?? "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง";
+}
+
+export function AuthModal({
+  open,
+  onClose
+}: {
+  open: boolean;
+  onClose: () => void;
 }) {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authEmail, setAuthEmail] = useState("");
@@ -18,11 +35,11 @@ export function AuthModal({
   if (!open) return null;
 
   const handleAuthSubmit = async () => {
-    if (!authEmail.trim() || !authPassword.trim()) { 
-      setAuthError("กรุณากรอกอีเมลและรหัสผ่าน"); 
-      return; 
+    if (!authEmail.trim() || !authPassword.trim()) {
+      setAuthError("กรุณากรอกอีเมลและรหัสผ่าน");
+      return;
     }
-    setAuthError(null); 
+    setAuthError(null);
     setAuthLoading(true);
     try {
       if (authMode === "login") {
@@ -30,27 +47,27 @@ export function AuthModal({
       } else {
         await createUserWithEmailAndPassword(auth, authEmail.trim(), authPassword);
       }
-      onClose(); 
-      setAuthEmail(""); 
+      onClose();
+      setAuthEmail("");
       setAuthPassword("");
     } catch (err: unknown) {
       console.error(err);
-      setAuthError("เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
-    } finally { 
-      setAuthLoading(false); 
+      setAuthError(translateAuthError(err));
+    } finally {
+      setAuthLoading(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300" 
-        onClick={onClose} 
+      <div
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300"
+        onClick={onClose}
       />
-      
+
       <div className="relative w-full max-w-md rounded-3xl border border-zinc-800/80 bg-zinc-950/80 p-8 shadow-2xl shadow-indigo-900/10 backdrop-blur-xl animate-in zoom-in-95 fade-in duration-300">
-        
-        <button 
+
+        <button
           onClick={onClose}
           className="absolute top-4 right-4 p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-full transition"
         >
@@ -75,28 +92,28 @@ export function AuthModal({
         <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-zinc-400 pl-1">อีเมล</label>
-            <input 
-              type="email" 
-              className="w-full rounded-2xl bg-zinc-900/50 border border-zinc-800 px-4 py-3.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all" 
-              value={authEmail} 
-              onChange={(e) => setAuthEmail(e.target.value)} 
-              placeholder="you@example.com" 
+            <input
+              type="email"
+              className="w-full rounded-2xl bg-zinc-900/50 border border-zinc-800 px-4 py-3.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              placeholder="you@example.com"
             />
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-zinc-400 pl-1">รหัสผ่าน</label>
-            <input 
-              type="password" 
-              className="w-full rounded-2xl bg-zinc-900/50 border border-zinc-800 px-4 py-3.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all" 
-              value={authPassword} 
-              onChange={(e) => setAuthPassword(e.target.value)} 
-              placeholder="อย่างน้อย 6 ตัวอักษร" 
-              onKeyDown={(e) => { if(e.key === 'Enter') handleAuthSubmit(); }}
+            <input
+              type="password"
+              className="w-full rounded-2xl bg-zinc-900/50 border border-zinc-800 px-4 py-3.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              placeholder="อย่างน้อย 6 ตัวอักษร"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAuthSubmit(); }}
             />
           </div>
 
-          <button 
-            onClick={handleAuthSubmit} 
+          <button
+            onClick={handleAuthSubmit}
             disabled={authLoading}
             className="w-full mt-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-3.5 font-semibold text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-purple-500 hover:shadow-indigo-500/40 transition-all disabled:opacity-50 flex justify-center items-center gap-2"
           >
@@ -110,8 +127,8 @@ export function AuthModal({
 
         <div className="mt-8 text-center text-sm text-zinc-500">
           {authMode === "login" ? "ยังไม่มีบัญชีใช่ไหม? " : "มีบัญชีอยู่แล้วใช่ไหม? "}
-          <button 
-            onClick={() => { setAuthError(null); setAuthMode((m) => (m === "login" ? "register" : "login")); }} 
+          <button
+            onClick={() => { setAuthError(null); setAuthMode((m) => (m === "login" ? "register" : "login")); }}
             className="font-medium text-indigo-400 hover:text-indigo-300 hover:underline transition"
           >
             {authMode === "login" ? "สมัครสมาชิกที่นี่" : "เข้าสู่ระบบเลย"}

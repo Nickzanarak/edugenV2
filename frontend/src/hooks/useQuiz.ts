@@ -100,7 +100,9 @@ export function useQuiz(context: string, authHeader: AuthHeaders) {
     deps.setLoadingText(`กำลังสร้างข้อสอบ ${type === "mcq" ? "แบบปรนัย " : "แบบถูกผิด "} เพิ่ม`);
 
     await ensureTopics();
-    const topicSlice = topicsRef.current.splice(0, want);
+    // ยังไม่ตัดหัวข้อออกตอนนี้ รอจนสร้างข้อสอบสำเร็จก่อน
+    // (เดิมใช้ splice ทันที ทำให้หัวข้อหายถาวรถ้า API ล้มเหลว)
+    const topicSlice = topicsRef.current.slice(0, want);
 
     try {
       const excludeTexts = questions
@@ -127,6 +129,8 @@ export function useQuiz(context: string, authHeader: AuthHeaders) {
         return;
       }
 
+      // สำเร็จแล้วค่อยตัดหัวข้อที่ใช้ไปออกจากคิว
+      topicsRef.current.splice(0, want);
       const batchReady = shuffleAndRemapBatch(incoming.slice(0, want));
       const newQuestions = [...questions, ...batchReady];
       setQuestions(newQuestions);
