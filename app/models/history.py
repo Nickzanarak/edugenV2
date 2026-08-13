@@ -4,6 +4,9 @@ from typing import List, Dict, Any
 class QAPair(BaseModel):
     question: str
     answer: str
+    # ช่วงหน้าที่ AI ใช้อ้างอิงตอบ (เช่น "หน้า 12-18")
+    # ต้องมี field นี้ ไม่งั้น Pydantic จะตัดทิ้งเงียบ ๆ ทำให้ป้ายอ้างอิงหายตอนเปิดประวัติเก่า
+    source: str = ""
 
 class QuizHistoryIn(BaseModel):
     file_name: str

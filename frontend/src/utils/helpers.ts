@@ -15,7 +15,10 @@ export function isStringArray(v: unknown): v is string[] {
 export const idxToLetter = ["ก", "ข", "ค", "ง", "จ", "ฉ"];
 export const letterToIdx: Record<string, number> = { ก: 0, ข: 1, ค: 2, ง: 3, จ: 4, ฉ: 5 };
 
-export const stripChoiceLabel = (s: string) => String(s).replace(/^\s*[กขคงจฉ]\)\s*/i, "").trim();
+// ตัดตัวอักษรนำหน้าตัวเลือกออก เช่น "ก) ...", "ก. ...", "ก . ..."
+// ต้องมีตัวคั่น ) หรือ . เสมอ เพื่อไม่ให้ไปตัดคำไทยที่ขึ้นต้นด้วย ก ข ค ง จ ฉ
+// (เช่น "การประมวลผล", "ความปลอดภัย", "งานวิจัย")
+export const stripChoiceLabel = (s: string) => String(s).replace(/^\s*[กขคงจฉ]\s*[).]\s*/, "").trim();
 
 export const toStr = (v: unknown) => (typeof v === "string" ? v : String(v ?? "")).trim();
 

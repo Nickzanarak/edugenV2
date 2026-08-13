@@ -43,7 +43,7 @@ export const HistoryItemSchema = z.object({
   sections: z.array(SectionSchema).optional(),
   dataPoints: z.array(DataPointSchema).optional(),
   content: z.string().optional(),
-  qa_history: z.array(z.object({ question: z.string(), answer: z.string() })).optional(),
+  qa_history: z.array(z.object({ question: z.string(), answer: z.string(), source: z.string().optional() })).optional(),
   lockedCount: z.number().optional(),
 });
 
