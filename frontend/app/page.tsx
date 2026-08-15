@@ -793,7 +793,6 @@ export default function Home() {
       <BankPanel
         {...bank}
         questions={questions}
-        onError={setError}
       />
 
       <PromptModal

@@ -12,7 +12,6 @@ type BankState = ReturnType<typeof useBank>;
 
 type Props = BankState & {
   questions: QuizItem[];
-  onError: (msg: string) => void;
 };
 
 const MIN_CHOICES = 4;
@@ -169,7 +168,6 @@ function EditQuestionRow({
 
 export function BankPanel({
   questions,
-  onError,
   setsOpen, setSetsOpen,
   sets,
   saveOpen, setSaveOpen,
@@ -297,7 +295,13 @@ export function BankPanel({
                     </button>
                     <button
                       className="text-xs px-3 py-2 rounded-xl bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600/20 hover:text-emerald-300 transition border border-emerald-500/20"
-                      onClick={() => exportSetPdf(s.id, onError, { showAnswers: false })}
+                      onClick={() => exportSetPdf(
+                        s.id,
+                        // ใช้ Toast แทนกล่อง error ของหน้าหลัก
+                        // เพราะตอนกดปุ่มนี้ผู้ใช้อยู่ใน popup ซึ่งบังกล่อง error ไว้ ทำให้ไม่เห็นข้อความ
+                        (msg) => showToast(msg, "error"),
+                        { showAnswers: false },
+                      )}
                     >
                       ส่งออก PDF
                     </button>
