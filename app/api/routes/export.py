@@ -113,6 +113,10 @@ def export_quiz_pdf(quiz_id: int, opts: ExportOpts = Body(...), uid: str = Depen
         raise HTTPException(404, "Quiz not found")
     by_id = {int(q["id"]): q for q in questions if "id" in q}
     bundle = [by_id[i] for i in qz.get("question_ids", []) if i in by_id]
+    # ชุดที่ไม่มีข้อสอบจะได้ไฟล์เปล่า ผู้ใช้จะงงว่าดาวน์โหลดมาแล้วไม่มีอะไร
+    # จึงแจ้งกลับไปให้ชัดตั้งแต่ต้น
+    if not bundle:
+        raise HTTPException(400, "ชุดนี้ยังไม่มีข้อสอบ")
     pdf_bytes = _render_pdf_quiz(qz.get("title", "แบบทดสอบ"), bundle, opts)
     raw_name = (qz.get("title", "quiz") or "quiz").strip()
     base_no_pdf = re.sub(r"\.pdf$", "", raw_name, flags=re.IGNORECASE)

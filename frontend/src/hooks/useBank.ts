@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseApi } from "../lib/validate";
 import { BankQuestionSchema, BankQuestionListSchema, QuizSetListSchema } from "../schemas/api";
 import type { AuthHeaders } from "../services/api";
-import { apiFetch, apiFetchBlob } from "../services/api";
+import { apiFetch, apiFetchBlob, ApiError } from "../services/api";
 import type { BankQuestion, QuizItem, QuizSet } from "../types";
 
 function bankAuthKey(authHeader: AuthHeaders): string {
@@ -18,6 +18,19 @@ function pickFilenameFromHeader(h: Headers): string | null {
     try { return decodeURIComponent(m[1]); } catch { return m[1]; }
   }
   return null;
+}
+
+/** แปลข้อผิดพลาดตอนส่งออก PDF เป็นข้อความที่บอกสาเหตุได้จริง
+ *  (เดิมแสดง "เช็ก API/CORS" เหมือนกันหมด ผู้ใช้ไม่รู้ว่าต้องแก้อะไร) */
+function describeExportError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 401) return "ต้องเข้าสู่ระบบก่อนจึงจะส่งออกได้";
+    if (e.status === 404) return "ไม่พบชุดข้อสอบนี้ อาจถูกลบไปแล้ว";
+    if (e.status === 400) return "ชุดนี้ยังไม่มีข้อสอบ กรุณาเพิ่มข้อสอบก่อนส่งออก";
+    if (e.status >= 500) return "เซิร์ฟเวอร์มีปัญหาในการสร้างไฟล์ กรุณาลองใหม่";
+    return `ส่งออกไม่สำเร็จ (รหัส ${e.status})`;
+  }
+  return "ส่งออกไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่";
 }
 
 function buildQuestionPayload(q: QuizItem | BankQuestion) {
@@ -164,9 +177,11 @@ export function useBank(authHeader: AuthHeaders) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
-    } catch {
-      onError("ส่งออกไม่ได้: เช็ก API/CORS");
+      // หน่วงก่อนคืนหน่วยความจำ เพราะบางเบราว์เซอร์ยังอ่านไฟล์ไม่เสร็จ
+      // ถ้าคืนทันทีอาจได้ไฟล์ที่ดาวน์โหลดไม่สมบูรณ์
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      onError(describeExportError(e));
     }
   }, [authHeader, sets]);
 
