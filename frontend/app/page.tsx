@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { auth } from "../src/lib/firebase";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { onIdTokenChanged, signOut, type User } from "firebase/auth";
 import { Section, DataPoint, QAPair, HistoryItem, QuizItem } from "../src/types";
 import { parseApi } from "../src/lib/validate";
 import { PdfExtractSchema, SummarizeResponseSchema } from "../src/schemas/api";
@@ -75,7 +75,10 @@ export default function Home() {
   }, [isLanding]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
+    // ใช้ onIdTokenChanged แทน onAuthStateChanged
+    // token ของ Firebase หมดอายุทุก 1 ชั่วโมงและถูกต่ออายุอัตโนมัติ
+    // ถ้าใช้ onAuthStateChanged จะรับรู้เฉพาะตอนเข้า/ออกจากระบบ ทำให้ระบบถือ token เก่าที่หมดอายุแล้ว
+    const unsub = onIdTokenChanged(auth, async (user) => {
       if (user) {
         try {
           const token = await user.getIdToken();
@@ -98,7 +101,17 @@ export default function Home() {
 
       setAuthReady(true);
     });
-    return () => unsub();
+
+    // ขอ token ใหม่ทุก 50 นาที (อายุจริง 60 นาที) เผื่อผู้ใช้เปิดหน้าเว็บทิ้งไว้นาน
+    // onIdTokenChanged ด้านบนจะรับค่าใหม่เอง
+    const refreshTimer = window.setInterval(() => {
+      auth.currentUser?.getIdToken(true).catch(() => { /* รอบหน้าลองใหม่ */ });
+    }, 50 * 60 * 1000);
+
+    return () => {
+      unsub();
+      window.clearInterval(refreshTimer);
+    };
   }, [invalidateHistory]);
 
   const [loadingText, setLoadingText] = useState<string>("");

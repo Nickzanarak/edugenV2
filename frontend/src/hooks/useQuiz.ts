@@ -57,13 +57,18 @@ export function useQuiz(context: string, authHeader: AuthHeaders) {
     topicsRef.current = [];
   }, []);
 
-  const ensureTopics = useCallback(async () => {
-    if (!context || topicsRef.current.length >= 10) return;
+  /** โหลดหัวข้อจากเนื้อหา
+   *  รับ overrideContext ได้ สำหรับกรณีที่เพิ่ง setState แล้ว state ยังไม่อัปเดต
+   *  (React เปลี่ยนค่า state แบบ async — ถ้าพึ่ง context จาก closure จะได้ค่าเก่า)
+   */
+  const ensureTopics = useCallback(async (overrideContext?: string) => {
+    const ctx = (overrideContext ?? context) || "";
+    if (!ctx || topicsRef.current.length >= 10) return;
     try {
       const raw = await apiFetch<unknown>("/quiz/topics", {
         method: "POST",
         auth: authHeader,
-        json: { context },
+        json: { context: ctx },
       });
       const json = parseApi(TopicsResponseSchema, raw, "quiz topics");
       if (json.topics.length > 0) {
