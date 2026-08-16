@@ -189,6 +189,26 @@ export function BankPanel({
   // popup แก้ชื่อชุด / ยืนยันลบ (ใช้แทน prompt/confirm ของเบราว์เซอร์)
   const [renameTarget, setRenameTarget] = useState<{ id: number; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  /** สร้างชุดข้อสอบใหม่ — ใช้ร่วมกันทั้งปุ่มและการกด Enter
+   *  เดิมเขียนแยกกัน 2 ที่ ทำให้พฤติกรรมต่างกันและไม่มีใครจับ error
+   *  ล้างช่องเฉพาะตอนสำเร็จ ผู้ใช้จะได้ไม่ต้องพิมพ์ชื่อใหม่ถ้าพลาด
+   */
+  const handleCreateSet = async () => {
+    const title = creatingTitle.trim();
+    if (!title || creating) return;
+    setCreating(true);
+    try {
+      await createSet(title);
+      setCreatingTitle("");
+      showToast(`สร้างชุด "${title}" แล้ว`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "สร้างชุดไม่สำเร็จ", "error");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <>
@@ -242,21 +262,16 @@ export function BankPanel({
               value={creatingTitle}
               onChange={(e) => setCreatingTitle(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && creatingTitle.trim()) {
-                  createSet(creatingTitle.trim());
-                  setCreatingTitle("");
-                }
+                if (e.key === "Enter") handleCreateSet();
               }}
+              disabled={creating}
             />
             <button
-              onClick={async () => {
-                if (!creatingTitle.trim()) return;
-                await createSet(creatingTitle.trim());
-                setCreatingTitle("");
-              }}
-              className="rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 font-semibold text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-purple-500 transition-all whitespace-nowrap flex items-center justify-center gap-2"
+              onClick={handleCreateSet}
+              disabled={creating || !creatingTitle.trim()}
+              className="rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 font-semibold text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-500 hover:to-purple-500 disabled:from-zinc-800 disabled:to-zinc-800 disabled:text-zinc-600 disabled:shadow-none transition-all whitespace-nowrap flex items-center justify-center gap-2"
             >
-              สร้างชุดใหม่
+              {creating ? "กำลังสร้าง…" : "สร้างชุดใหม่"}
             </button>
           </div>
 
