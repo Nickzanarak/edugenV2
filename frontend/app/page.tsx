@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type KeyboardEvent } from "react";
 import { auth } from "../src/lib/firebase";
 import { onIdTokenChanged, signOut, type User } from "firebase/auth";
 import { Section, DataPoint, QAPair, HistoryItem, QuizItem } from "../src/types";
@@ -217,9 +217,22 @@ export default function Home() {
   const { resetQuiz, restoreFromHistory, questions, answers, score, lockedCount, countByType, handleAnswerChange, isOverallSubmitted, isAllAnswered, ensureTopics, addMoreQuiz, submitQuiz } = quiz;
   const { resetQA, setQaHistory, qaHistory, qaInput, setQaInput, askQA } = qa;
 
+  /** กด Enter ในช่องพิมพ์เนื้อหา = สั่งสรุป (Shift+Enter = ขึ้นบรรทัดใหม่)
+   *  ใช้ร่วมกันทั้งหน้าแรกและหน้าทำงาน เพื่อให้พฤติกรรมเหมือนกันทั้งเว็บ
+   *  และเช็คเงื่อนไขเดียวกับปุ่มส่ง (ต้องมีเนื้อหาและไม่อยู่ระหว่างประมวลผล)
+   */
+  const handleComposerKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    if (loading || !context.trim()) return;
+    summarize();
+  };
+
   const handleNewSession = useCallback(() => {
     setIsLanding(true);
     setCurrentHistoryId(null);
+    // ล้างข้อความผิดพลาดด้วย ไม่งั้นมันจะค้างอยู่และโผล่กลับมาเมื่ออัปโหลดไฟล์ใหม่
+    setError(null);
     setText("");
     setPdf(null);
     setPdfText("");
@@ -250,6 +263,13 @@ export default function Home() {
   }, [restoreFromHistory, setQaHistory]);
 
   const uploadPdf = async (file: File | null) => {
+    // เช็คสิทธิ์ก่อนเริ่มทำอะไร ถ้ายังไม่ได้เข้าสู่ระบบให้อยู่หน้าเดิม
+    // (เดิมเปลี่ยนไปหน้าทำงานก่อนแล้วค่อย 401 ทำให้ผู้ใช้ค้างอยู่หน้าว่างเปล่า)
+    if (file && !canUseProtectedApi(!!currentUser)) {
+      setLoginRequired(true);
+      return;
+    }
+
     setPdf(file); setPdfText("");
     setHiddenContext("");
 
@@ -429,9 +449,12 @@ export default function Home() {
   }, [currentUser, handleNewSession]);
 
   const summarize = async () => {
-    setIsLanding(false);
     if (!context) return;
-    if (!canUseProtectedApi(!!currentUser)) { setAuthOpen(true); return; }
+    // ตรวจสิทธิ์ก่อนเปลี่ยนหน้า ถ้ายังไม่ได้เข้าสู่ระบบให้อยู่หน้าเดิม
+    // จะได้ไม่ค้างอยู่หน้าทำงานที่ว่างเปล่าหลังปิด popup
+    if (!canUseProtectedApi(!!currentUser)) { setLoginRequired(true); return; }
+
+    setIsLanding(false);
     if (!pdf) { setFileId("manual"); firstLoadRef.current = true; await loadNote("manual"); }
 
     const isUpdating = !!currentHistoryId;
@@ -644,7 +667,7 @@ export default function Home() {
                   className="w-full h-32 bg-transparent border-0 outline-none text-lg resize-none placeholder-zinc-500 text-zinc-100"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); summarize(); } }}
+                  onKeyDown={handleComposerKeyDown}
                 />
 
                 <div className="flex justify-between items-center mt-2">
@@ -673,6 +696,7 @@ export default function Home() {
                     className="w-full h-36 bg-transparent border-0 px-4 py-2 text-zinc-100 placeholder-zinc-600 focus:ring-0 outline-none resize-none leading-relaxed text-base md:text-lg custom-scrollbar"
                     value={text}
                     onChange={(e) => setText(e.target.value)}
+                    onKeyDown={handleComposerKeyDown}
                   />
                 </div>
 
@@ -693,7 +717,7 @@ export default function Home() {
                     ) : (
                       <div className="text-zinc-500 text-sm font-medium px-2 flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-zinc-600"></span>
-                        โmovedข้อความ (Manual)
+                        โหมดข้อความ (Manual)
                       </div>
                     )}
                   </div>
