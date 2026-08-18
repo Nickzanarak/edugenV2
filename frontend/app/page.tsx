@@ -540,7 +540,7 @@ export default function Home() {
   }, [authReady, fileId, loadNote]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans" onMouseMove={handleMouseMove}>
+    <div className="h-screen overflow-hidden bg-zinc-950 text-zinc-100 flex flex-col font-sans" onMouseMove={handleMouseMove}>
       <style jsx>{`
         @keyframes drift {
           0% { background-position: 0 0; }
@@ -614,12 +614,12 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="flex flex-1 w-full h-[calc(100vh-73px)] overflow-hidden relative">
+      <div className="flex flex-1 min-h-0 w-full overflow-hidden relative">
 
         {currentUser && (
           <aside
             className={`
-              border-r border-zinc-800 bg-zinc-950/50 flex-shrink-0 transition-all duration-300 ease-in-out relative z-20
+              border-r border-zinc-800 bg-zinc-950/50 flex-shrink-0 h-full overflow-hidden transition-all duration-300 ease-in-out relative z-20
               ${isSidebarOpen ? 'w-72 translate-x-0' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}
             `}
           >
@@ -635,10 +635,10 @@ export default function Home() {
           </aside>
         )}
 
-        <main className="flex-1 flex flex-col min-w-0 overflow-y-auto transition-all duration-500 relative z-10">
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-y-auto transition-all duration-500 relative z-10">
 
           {isLanding ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in duration-500 relative overflow-hidden">
+            <div className="flex-1 min-h-full flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in duration-500 relative overflow-hidden">
 
               <div
                 className="pointer-events-none fixed inset-0 z-0 animate-grid"
