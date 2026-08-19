@@ -468,9 +468,14 @@ export function BankPanel({
                         onClick={async () => {
                           if (!editOpen.set) return;
                           const ids = editOpen.set.question_ids.filter((id) => id !== qid);
-                          await renameSet(editOpen.set.id, editOpen.set.title, ids);
-                          await loadSets();
-                          setEditOpen((e) => ({ ...e, set: { ...e.set!, question_ids: ids } }));
+                          try {
+                            await renameSet(editOpen.set.id, editOpen.set.title, ids);
+                            await loadSets();
+                            setEditOpen((e) => ({ ...e, set: { ...e.set!, question_ids: ids } }));
+                            showToast("ลบออกจากชุดแล้ว");
+                          } catch {
+                            showToast("ลบออกจากชุดไม่สำเร็จ", "error");
+                          }
                         }}
                       >
                         ลบออกจากชุด
@@ -488,9 +493,14 @@ export function BankPanel({
                   onRemove={async () => {
                     if (!editOpen.set) return;
                     const ids = editOpen.set.question_ids.filter((id) => id !== qid);
-                    await renameSet(editOpen.set.id, editOpen.set.title, ids);
-                    await loadSets();
-                    setEditOpen((e) => ({ ...e, set: { ...e.set!, question_ids: ids } }));
+                    try {
+                      await renameSet(editOpen.set.id, editOpen.set.title, ids);
+                      await loadSets();
+                      setEditOpen((e) => ({ ...e, set: { ...e.set!, question_ids: ids } }));
+                      showToast("ลบออกจากชุดแล้ว");
+                    } catch {
+                      showToast("ลบออกจากชุดไม่สำเร็จ", "error");
+                    }
                   }}
                   onSave={async (updatedQ) => {
                     await updateBankQuestion(updatedQ);
