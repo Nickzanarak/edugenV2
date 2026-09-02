@@ -7,6 +7,7 @@ import { PrimaryBtn } from "../ui/PrimaryBtn";
 import { useToast } from "../ui/Toast";
 import { PromptModal } from "../ui/PromptModal";
 import { ConfirmModal } from "../ui/ConfirmModal";
+import { ExportOptionsModal } from "../ui/ExportOptionsModal";
 
 type BankState = ReturnType<typeof useBank>;
 
@@ -190,6 +191,7 @@ export function BankPanel({
   const [renameTarget, setRenameTarget] = useState<{ id: number; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [exportTarget, setExportTarget] = useState<{ id: number; title: string } | null>(null);
 
   /** สร้างชุดข้อสอบใหม่ — ใช้ร่วมกันทั้งปุ่มและการกด Enter
    *  เดิมเขียนแยกกัน 2 ที่ ทำให้พฤติกรรมต่างกันและไม่มีใครจับ error
@@ -310,13 +312,7 @@ export function BankPanel({
                     </button>
                     <button
                       className="text-xs px-3 py-2 rounded-xl bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600/20 hover:text-emerald-300 transition border border-emerald-500/20"
-                      onClick={() => exportSetPdf(
-                        s.id,
-                        // ใช้ Toast แทนกล่อง error ของหน้าหลัก
-                        // เพราะตอนกดปุ่มนี้ผู้ใช้อยู่ใน popup ซึ่งบังกล่อง error ไว้ ทำให้ไม่เห็นข้อความ
-                        (msg) => showToast(msg, "error"),
-                        { showAnswers: false },
-                      )}
+                      onClick={() => setExportTarget({ id: s.id, title: s.title })}
                     >
                       ส่งออก PDF
                     </button>
@@ -528,6 +524,23 @@ export function BankPanel({
           } catch {
             showToast("เปลี่ยนชื่อไม่สำเร็จ", "error");
           }
+        }}
+      />
+
+      <ExportOptionsModal
+        open={!!exportTarget}
+        setTitle={exportTarget?.title ?? ""}
+        onCancel={() => setExportTarget(null)}
+        onConfirm={(showAnswers) => {
+          if (!exportTarget) return;
+          const target = exportTarget;
+          setExportTarget(null);
+          exportSetPdf(
+            target.id,
+            // ใช้ Toast เพราะผู้ใช้อยู่ใน popup ซึ่งบังกล่อง error ของหน้าหลัก
+            (msg) => showToast(msg, "error"),
+            { showAnswers },
+          );
         }}
       />
 

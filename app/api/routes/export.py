@@ -14,7 +14,7 @@ try:
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
 except ImportError:
@@ -87,13 +87,21 @@ def _render_pdf_quiz(title: str, questions: List[Dict[str, Any]], opts: ExportOp
             chs = _mcq_lines(ch_raw)
         for line in chs:
             story.append(Paragraph(f"&nbsp;&nbsp;&nbsp;{line}", style_normal))
-        if opts.showAnswers:
+        story.append(Spacer(1, 6))
+
+    # เฉลยแยกไว้หน้าสุดท้าย ไม่แทรกใต้แต่ละข้อ
+    # เพื่อให้ครูตัดหน้าเฉลยทิ้งแล้วนำข้อสอบไปแจกได้ทันที
+    if opts.showAnswers and questions:
+        story.append(PageBreak())
+        story.append(Paragraph("เฉลย", style_title))
+        story.append(Spacer(1, 6))
+        for idx, q in enumerate(questions, start=1):
+            qtype = (q.get("type", "mcq") or "").lower()
             ans = str(q.get("answer", "")).strip()
             if qtype == "tf":
-                ans = "ก" if ans.lower() in ["true", "จริง"] else "ข"
-            explain = str(q.get("explain") or "").strip()
-            story.append(Paragraph(f"<b>เฉลย:</b> {ans}{(' — ' + explain) if explain else ''}", style_normal))
-        story.append(Spacer(1, 6))
+                # ข้อถูก/ผิดแสดงเป็นคำ อ่านเข้าใจกว่าตัวอักษร ก/ข
+                ans = "จริง" if ans.lower() in ["true", "จริง"] else "เท็จ"
+            story.append(Paragraph(f"{idx}. {ans}", style_normal))
         
     def _on_page(canvas, doc):
         # ใช้ฟอนต์ที่โหลดไว้แล้วตอนต้น ไม่ต้องลงทะเบียนซ้ำทุกหน้า
@@ -120,6 +128,9 @@ def export_quiz_pdf(quiz_id: int, opts: ExportOpts = Body(...), uid: str = Depen
     pdf_bytes = _render_pdf_quiz(qz.get("title", "แบบทดสอบ"), bundle, opts)
     raw_name = (qz.get("title", "quiz") or "quiz").strip()
     base_no_pdf = re.sub(r"\.pdf$", "", raw_name, flags=re.IGNORECASE)
+    # แยกชื่อไฟล์ให้ชัด ครูมักดาวน์โหลดทั้งสองแบบ ถ้าชื่อซ้ำจะทับกันในเครื่อง
+    if opts.showAnswers:
+        base_no_pdf = f"{base_no_pdf} (เฉลย)"
     fallback = re.sub(r"[^A-Za-z0-9_.-]+", "_", base_no_pdf) or "quiz"
     fallback = f"{fallback}.pdf"
     utf8_name = quote(f"{base_no_pdf}.pdf".encode("utf-8"))
