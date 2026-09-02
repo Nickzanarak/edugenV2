@@ -10,7 +10,26 @@ export type QuizConfig = {
   count: number;
   difficulty: string;
   choicesCount: number;
+  /** "source" = ถามจากเนื้อหา (ค่าเริ่มต้น) | "applied" = ประยุกต์ */
+  mode?: string;
 };
+
+const CHOICE_LETTERS = ["ก", "ข", "ค", "ง", "จ", "ฉ"];
+
+/** แปลงข้อสอบเดิมให้อยู่ในรูป { question, answer } เพื่อส่งไปกันข้อซ้ำ
+ *  ส่งเฉลยไปด้วยเพื่อให้ AI แยกออกว่า "กฎเดียวกันแต่เปลี่ยนค่า" ไม่ใช่ข้อซ้ำ */
+function toExcludeItem(q: QuizItem) {
+  let answer = "";
+  if (q.type === "mcq") {
+    const i = CHOICE_LETTERS.indexOf(q.answer);
+    answer = i >= 0 && q.choices?.[i] ? q.choices[i] : q.answer;
+  } else {
+    answer = q.answer === "true" ? "จริง" : "เท็จ";
+    // เฉลยถูก/ผิดมีแค่ 2 ค่า จึงแนบเหตุผลไปด้วยเพื่อบอกว่าข้อนั้นวัดอะไร
+    if (q.explain) answer += ` (${q.explain})`;
+  }
+  return { question: q.question, answer };
+}
 
 export function useQuiz(context: string, authHeader: AuthHeaders) {
   const [questions, setQuestions] = useState<QuizItem[]>([]);
@@ -110,9 +129,9 @@ export function useQuiz(context: string, authHeader: AuthHeaders) {
     const topicSlice = topicsRef.current.slice(0, want);
 
     try {
-      const excludeTexts = questions
+      const excludeItems = questions
         .filter((q) => q.type === type)
-        .map((q) => q.question);
+        .map(toExcludeItem);
 
       const raw = await apiFetch<unknown>(`/quiz/${type}`, {
         method: "POST",
@@ -120,10 +139,11 @@ export function useQuiz(context: string, authHeader: AuthHeaders) {
         json: {
           context,
           n: want,
-          exclude: excludeTexts,
+          exclude: excludeItems,
           topics: topicSlice.length ? topicSlice : undefined,
           difficulty: config.difficulty,
           choices_count: type === "mcq" ? config.choicesCount : undefined,
+          mode: config.mode ?? "source",
         },
       });
       const json = parseApi(QuizApiResponseSchema, raw, `quiz ${type}`);

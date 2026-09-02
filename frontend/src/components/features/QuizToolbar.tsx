@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { MAX_QUESTIONS } from "../../constants/quiz";
 import { QuizConfigModal } from "./QuizConfigModal";
+import type { QuizConfig } from "../../hooks/useQuiz";
 
 type Props = {
   mcqCount: number;
   tfCount: number;
   loading: boolean;
   topicCount: number;
-  onAdd: (type: "mcq" | "tf", config: { count: number; difficulty: string; choicesCount: number }) => void;
+  onAdd: (type: "mcq" | "tf", config: QuizConfig) => void;
 };
 
 export function QuizToolbar({ mcqCount, tfCount, loading, topicCount, onAdd }: Props) {
@@ -16,7 +17,7 @@ export function QuizToolbar({ mcqCount, tfCount, loading, topicCount, onAdd }: P
   const currentCount = openType === "mcq" ? mcqCount : tfCount;
   const maxCount = MAX_QUESTIONS - currentCount;
 
-  const handleConfirm = (config: { count: number; difficulty: string; choicesCount: number }) => {
+  const handleConfirm = (config: QuizConfig) => {
     if (!openType) return;
     onAdd(openType, config);
     setOpenType(null);

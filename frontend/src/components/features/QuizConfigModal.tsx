@@ -7,7 +7,7 @@ type Props = {
     maxCount: number;
     topicCount: number;
     onClose: () => void;
-    onConfirm: (config: { count: number; difficulty: string; choicesCount: number }) => void;
+    onConfirm: (config: { count: number; difficulty: string; choicesCount: number; mode: string }) => void;
 };
 
 function LevelIcon({ level, active }: { level: number; active: boolean }) {
@@ -27,11 +27,33 @@ function LevelIcon({ level, active }: { level: number; active: boolean }) {
     );
 }
 
-const DIFFICULTIES = [
-    { value: "easy", label: "ง่าย", desc: "เน้นความจำและทบทวน", level: 1 },
-    { value: "medium", label: "ปานกลาง", desc: "ผสมผสานประยุกต์ความเข้าใจ", level: 2 },
-    { value: "hard", label: "ยาก", desc: "ต้องคิดวิเคราะห์", level: 3 },
+const MODES = [
+    {
+        value: "source",
+        label: "ถามจากเนื้อหา",
+        desc: "อ้างอิงเอกสารโดยตรง",
+    },
+    {
+        value: "applied",
+        label: "ประยุกต์",
+        desc: "ประยุกต์โจทย์จากเนื้อหา",
+    },
 ];
+
+/** คำอธิบายระดับความยากต่างกันตามโหมด
+ *  โหมดเดิมวัด "ต้องอ่านลึกแค่ไหน" ส่วนโหมดประยุกต์วัด "ต้องใช้กฎกี่ข้อ" */
+const DIFFICULTIES: Record<string, { value: string; label: string; desc: string; level: number }[]> = {
+    source: [
+        { value: "easy", label: "ง่าย", desc: "เน้นความจำและทบทวน", level: 1 },
+        { value: "medium", label: "ปานกลาง", desc: "ผสมผสานประยุกต์ความเข้าใจ", level: 2 },
+        { value: "hard", label: "ยาก", desc: "ต้องคิดวิเคราะห์", level: 3 },
+    ],
+    applied: [
+        { value: "easy", label: "ง่าย", desc: "โจทย์ใหม่ แบบง่าย", level: 1 },
+        { value: "medium", label: "ปานกลาง", desc: "โจทย์ใหม่ ต้องคิด", level: 2 },
+        { value: "hard", label: "ยาก", desc: "โจทย์ใหม่ ซับซ้อน", level: 3 },
+    ],
+};
 
 const TYPE_LABEL = {
     mcq: "ข้อสอบปรนัย",
@@ -49,12 +71,15 @@ export function QuizConfigModal({
     const [count, setCount] = useState(5);
     const [difficulty, setDifficulty] = useState("medium");
     const [choicesCount, setChoicesCount] = useState(4);
+    const [mode, setMode] = useState("source");
 
     useEffect(() => {
         if (open) {
             setCount(Math.min(5, maxCount));
             setDifficulty("medium");
             setChoicesCount(4);
+            // รีเซ็ตกลับโหมดเดิมทุกครั้ง กันค้างค่าจากการเปิดครั้งก่อนโดยไม่รู้ตัว
+            setMode("source");
         }
     }, [open, maxCount]);
 
@@ -70,7 +95,10 @@ export function QuizConfigModal({
     if (!open) return null;
 
     const clamp = (v: number) => Math.max(1, Math.min(maxCount, v));
-    const isOverTopics = topicCount > 0 && count > topicCount;
+    const isApplied = mode === "applied";
+    // โหมดประยุกต์แต่งโจทย์ใหม่จากกฎเดิมได้ไม่จำกัด จำนวนหัวข้อจึงไม่ใช่เพดานอีกต่อไป
+    const isOverTopics = !isApplied && topicCount > 0 && count > topicCount;
+    const difficulties = DIFFICULTIES[mode] ?? DIFFICULTIES.source;
     const presets = [3, 5, 10, 15].filter((p) => p <= maxCount);
 
     return createPortal(
@@ -98,11 +126,44 @@ export function QuizConfigModal({
                         ปรับแต่งความยากและจำนวนข้อสำหรับ{TYPE_LABEL[type]}ของคุณ
                     </p>
 
+                    {/* รูปแบบการออกข้อสอบ */}
+                    <div className="mt-6">
+                        <div className="text-sm font-semibold text-zinc-200 mb-3">รูปแบบการออกข้อสอบ</div>
+                        <div className="grid grid-cols-2 gap-2.5">
+                            {MODES.map((m) => {
+                                const active = mode === m.value;
+                                return (
+                                    <button
+                                        key={m.value}
+                                        onClick={() => setMode(m.value)}
+                                        className={`rounded-2xl border px-3 py-3.5 text-center transition-all duration-150 ${active
+                                            ? "border-indigo-500/70 bg-indigo-500/[0.09]"
+                                            : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 hover:bg-zinc-900"
+                                            }`}
+                                    >
+                                        <div className={`text-sm font-bold ${active ? "text-indigo-200" : "text-zinc-300"}`}>
+                                            {m.label}
+                                        </div>
+                                        <div className={`text-xs mt-0.5 leading-tight ${active ? "text-indigo-300/50" : "text-zinc-600"}`}>
+                                            {m.desc}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {isApplied && (
+                            <p className="mt-2.5 text-xs text-zinc-500 leading-relaxed">
+                                ระบบจะแต่งโจทย์ใหม่โดยใช้ข้อมูลจากเนื้อหาในเอกสาร
+                            </p>
+                        )}
+                    </div>
+
                     {/* ระดับความยาก */}
                     <div className="mt-6">
                         <div className="text-sm font-semibold text-zinc-200 mb-3">ระดับความยาก</div>
                         <div className="grid grid-cols-3 gap-2.5">
-                            {DIFFICULTIES.map((d) => {
+                            {difficulties.map((d) => {
                                 const active = difficulty === d.value;
                                 return (
                                     <button
@@ -216,7 +277,7 @@ export function QuizConfigModal({
                             </div>
                         )}
 
-                        {topicCount > 0 && !isOverTopics && (
+                        {!isApplied && topicCount > 0 && !isOverTopics && (
                             <p className="mt-2.5 text-xs text-zinc-600">
                                 เนื้อหานี้มีประมาณ {topicCount} หัวข้อ · แนะนำไม่เกิน {topicCount} ข้อ
                             </p>
@@ -243,7 +304,7 @@ export function QuizConfigModal({
                             ยกเลิก
                         </button>
                         <button
-                            onClick={() => onConfirm({ count, difficulty, choicesCount })}
+                            onClick={() => onConfirm({ count, difficulty, choicesCount, mode })}
                             className="px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all"
                         >
                             สร้างแบบทดสอบ
