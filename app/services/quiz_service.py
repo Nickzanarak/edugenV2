@@ -10,6 +10,7 @@ from app.utils.chunking import sample_across_document
 from app.utils.chunking import build_chunks_semantic as build_chunks
 from app.utils.timing import timed
 from app.utils.text import safe_json_loads
+from app.services import quiz_prompts as P
 
 
 class QuizService:
@@ -21,29 +22,23 @@ class QuizService:
         "all of the above", "none of the above",
     ]
 
-    DIFFICULTY_PROMPTS = {
-        "easy": """ระดับความยาก: ง่าย
-- ถามข้อเท็จจริงตรง ๆ ที่ปรากฏชัดเจนในเนื้อหา จำได้ก็ตอบได้
-- ห้ามต้องตีความหรือวิเคราะห์
-- ตัวเลือกลวงต้องผิดชัดเจน แยกออกง่ายทันที""",
-        "medium": """ระดับความยาก: ปานกลาง
-- ต้องเข้าใจความหมาย ไม่ใช่แค่จำข้อความ
-- อาจต้องเชื่อมโยงข้อมูล 2 จุดในเนื้อหาเข้าด้วยกัน
-- ตัวเลือกลวงดูมีเหตุผลระดับหนึ่ง ต้องอ่านให้ดีก่อนตัด""",
-        "hard": """ระดับความยาก: ยาก
-- ต้องใช้การวิเคราะห์ เปรียบเทียบ คำนวณ หรือเชื่อมโยงข้อมูลหลายจุดเข้าด้วยกัน จึงจะตอบได้
-- คำตอบต้องไม่ใช่ข้อความที่ลอกมาจากเนื้อหาตรง ๆ ผู้ตอบต้องคิดต่อเอง
-- ห้ามถามวนกลับ: ห้ามให้โจทย์บอกคำตอบไว้ในตัวคำถามเอง
-- ห้ามใส่ฉากสมมติที่ไม่ได้เพิ่มการคิด (ห่อคำถามง่ายด้วยสถานการณ์ปลอม)
-- ตัวเลือกลวงต้องใกล้เคียงคำตอบจริง ถูกบางส่วนแต่ผิดรายละเอียด จนต้องคิดรอบคอบ
-- ถ้าเนื้อหาไม่ลึกพอจะออกข้อยากได้จริง ให้ออกข้อที่ต้องคำนวณหรือเปรียบเทียบจากข้อมูลที่มี แทนการแต่งฉากสมมติ""",
-    }
-
     @staticmethod
-    def _difficulty_block(difficulty: Optional[str]) -> str:
-        key = (difficulty or "medium").strip().lower()
-        block = QuizService.DIFFICULTY_PROMPTS.get(key, QuizService.DIFFICULTY_PROMPTS["medium"])
-        return block + "\n"
+    def _normalize_exclude(exclude) -> List[Dict[str, str]]:
+        """ทำรายการข้อที่มีอยู่แล้วให้เป็นรูปเดียวกัน {question, answer}
+
+        รับได้ทั้งข้อความล้วน (แบบเดิม) และ dict ที่มีเฉลยมาด้วย (แบบใหม่)
+        เฉลยช่วยให้ AI ตัดสินได้ว่าข้อใหม่ซ้ำของเดิมจริงไหม
+        """
+        out: List[Dict[str, str]] = []
+        for x in (exclude or []):
+            if isinstance(x, dict):
+                q = str(x.get("question") or "").strip()
+                a = str(x.get("answer") or x.get("answer_text") or "").strip()
+            else:
+                q, a = str(x).strip(), ""
+            if q:
+                out.append({"question": q, "answer": a})
+        return out
 
     @staticmethod
     def _clamp_choices(choices_count: Optional[int]) -> int:
@@ -132,8 +127,9 @@ class QuizService:
         topics: Optional[List[str]] = None,
         difficulty: Optional[str] = "medium",
         choices_count: Optional[int] = 4,
+        mode: Optional[str] = P.MODE_SOURCE,
     ) -> List[Dict[str, Any]]:
-        return QuizService._generate_batch("mcq", context, n, exclude, topics, difficulty, choices_count)
+        return QuizService._generate_batch("mcq", context, n, exclude, topics, difficulty, choices_count, mode)
 
     @staticmethod
     def generate_tf(
@@ -142,8 +138,9 @@ class QuizService:
         exclude: Optional[List[str]] = None,
         topics: Optional[List[str]] = None,
         difficulty: Optional[str] = "medium",
+        mode: Optional[str] = P.MODE_SOURCE,
     ) -> List[Dict[str, Any]]:
-        return QuizService._generate_batch("tf", context, n, exclude, topics, difficulty, 4)
+        return QuizService._generate_batch("tf", context, n, exclude, topics, difficulty, 4, mode)
 
     @staticmethod
     def _generate_batch(
@@ -154,6 +151,7 @@ class QuizService:
         topics: Optional[List[str]],
         difficulty: Optional[str] = "medium",
         choices_count: Optional[int] = 4,
+        mode: Optional[str] = P.MODE_SOURCE,
     ) -> List[Dict[str, Any]]:
         """ตัวกระจายงาน:
         - เอกสารสั้น (ก้อนเดียว) -> ใช้วิธีเดิม ยิงรอบเดียว
@@ -170,7 +168,7 @@ class QuizService:
         # เอกสารสั้น -> ทางเดิม
         if len(chunks) <= 1:
             return QuizService._generate_from_text(
-                qtype, ctx, count, exclude, topics, difficulty, choices_count
+                qtype, ctx, count, exclude, topics, difficulty, choices_count, mode=mode
             )
 
         # ---- เอกสารยาว: แบ่งโควตาข้อให้แต่ละก้อน ----
@@ -187,8 +185,9 @@ class QuizService:
             ]
             picked = [(i, q) for i, q in picked if q > 0]
 
-        exclude_list = [str(x).strip() for x in (exclude or []) if str(x).strip()]
+        exclude_list = QuizService._normalize_exclude(exclude)
         topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()]
+        dup_threshold = P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD)
 
         def work(job):
             idx, quota = job
@@ -204,6 +203,7 @@ class QuizService:
                     difficulty,
                     choices_count,
                     max_tries=3,   # ต่อก้อนไม่ต้องพยายามหนักเท่ากรณีก้อนเดียว
+                    mode=mode,
                 )
             except Exception:
                 return []   # ก้อนเดียวพัง ไม่ให้ล้มทั้งคำขอ
@@ -220,7 +220,7 @@ class QuizService:
                     break
                 if all(
                     similar(str(q.get("question", "")), str(e.get("question", "")))
-                    < settings.NEAR_DUP_THRESHOLD
+                    < dup_threshold
                     for e in collected
                 ):
                     collected.append(q)
@@ -229,18 +229,18 @@ class QuizService:
         if len(collected) < count:
             need = count - len(collected)
             richest = max(range(len(chunks)), key=lambda i: len(chunks[i]))
-            excludes_now = exclude_list + [str(q.get("question") or "") for q in collected]
+            excludes_now = exclude_list + QuizService._normalize_exclude(collected)
             try:
                 extra = QuizService._generate_from_text(
                     qtype, chunks[richest], need, excludes_now, None,
-                    difficulty, choices_count, max_tries=3,
+                    difficulty, choices_count, max_tries=3, mode=mode,
                 )
                 for q in extra:
                     if len(collected) >= count:
                         break
                     if all(
                         similar(str(q.get("question", "")), str(e.get("question", "")))
-                        < settings.NEAR_DUP_THRESHOLD
+                        < dup_threshold
                         for e in collected
                     ):
                         collected.append(q)
@@ -259,6 +259,7 @@ class QuizService:
         difficulty: Optional[str] = "medium",
         choices_count: Optional[int] = 4,
         max_tries: int = 6,
+        mode: Optional[str] = P.MODE_SOURCE,
     ) -> List[Dict[str, Any]]:
         """ออกข้อสอบจากข้อความก้อนเดียว (ตรรกะเดิม) — ใช้ทั้งกรณีเอกสารสั้นและแต่ละก้อนของเอกสารยาว"""
         ctx = (context or "").strip()
@@ -266,29 +267,30 @@ class QuizService:
         if not ctx:
             raise HTTPException(400, "context ว่าง")
 
-        exclude_list = [str(x).strip() for x in (exclude or []) if str(x).strip()]
+        exclude_list = QuizService._normalize_exclude(exclude)
         topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()] or None
+        dup_threshold = P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD)
 
         collected: List[Dict[str, Any]] = []
         tries = 0
 
         while len(collected) < count and tries < max_tries:
             need = count - len(collected)
-            excludes_now = exclude_list + [str(q.get("question") or "") for q in collected]
+            excludes_now = exclude_list + QuizService._normalize_exclude(collected)
             topic_hints = topic_list[:need] if topic_list else None
             request_n = need + 5
 
             if qtype == "mcq":
-                batch = QuizService._gen_mcq_once(ctx, request_n, excludes_now, topic_hints, difficulty, choices_count)
+                batch = QuizService._gen_mcq_once(ctx, request_n, excludes_now, topic_hints, difficulty, choices_count, mode)
             else:
-                batch = QuizService._gen_tf_once(ctx, request_n, excludes_now, topic_hints, difficulty)
+                batch = QuizService._gen_tf_once(ctx, request_n, excludes_now, topic_hints, difficulty, mode)
 
             for q in batch:
                 if len(collected) >= count:
                     break   
                 if all(
                     similar(str(q.get("question", "")), str(e.get("question", "")))
-                    < settings.NEAR_DUP_THRESHOLD
+                    < dup_threshold
                     for e in collected
                 ):
                     collected.append(q)
@@ -308,14 +310,10 @@ class QuizService:
         topic_hints: Optional[List[str]] = None,
         difficulty: Optional[str] = "medium",
         choices_count: Optional[int] = 4,
+        mode: Optional[str] = P.MODE_SOURCE,
     ) -> List[Dict[str, Any]]:
-        exclude_block = ""
-        if exclude_list:
-            exclude_block = (
-                "หลีกเลี่ยงการตั้งคำถามคล้ายกับ:\n"
-                + "\n".join(f"- {q}" for q in exclude_list[: settings.EXCLUDE_LIST_LIMIT])
-                + "\n"
-            )
+        mode = P.normalize_mode(mode)
+        exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
         topic_block = ""
         if topic_hints:
             topic_block = (
@@ -324,7 +322,8 @@ class QuizService:
                 + "\n"
             )
 
-        difficulty_block = QuizService._difficulty_block(difficulty)
+        difficulty_block = P.difficulty_block(difficulty, mode)
+        answer_rules = P.ANSWER_RULES_MCQ[mode]
 
         cc = QuizService._clamp_choices(choices_count)
         letters = QuizService.CHOICE_LETTERS[:cc]
@@ -341,12 +340,7 @@ class QuizService:
 ห้ามสร้างตัวเลือกที่รวมตัวเลือกอื่น เช่น "ทั้งหมดที่กล่าวมา", "ถูกทุกข้อ", "ข้อ ก และ ข", "ไม่มีข้อใดถูก", "ทุกข้อข้างต้น" หรือข้อความใด ๆ ที่มีความหมายทำนองนี้ — เด็ดขาด ทุกกรณี
 ตัวเลือกทุกตัวต้องเป็นคำตอบที่เป็นอิสระต่อกัน และมีเพียงตัวเดียวที่ถูก
 
-*** ความถูกต้องของคำตอบ (สำคัญที่สุด) ***
-- คำตอบที่ถูกต้องจริง "ต้องปรากฏอยู่ในรายการตัวเลือก" เสมอ
-  ห้ามตั้งคำถามที่คำตอบจริงไม่ได้อยู่ในตัวเลือกใดเลย — ผู้สอบต้องตอบได้
-- ก่อนสรุปแต่ละข้อ ให้ตรวจว่า "ตัวเลือกที่ระบุใน answer คือคำตอบที่ถูกต้องจริง" ตามเนื้อหา
-- คำตอบต้องตรวจสอบย้อนกลับได้จากเนื้อหาที่ให้มาเท่านั้น ห้ามใช้ความรู้นอกเนื้อหา
-- ถ้าเนื้อหาไม่ได้ระบุคำตอบไว้ชัดเจน ให้เปลี่ยนไปถามประเด็นอื่นที่เนื้อหาระบุไว้ชัด
+{answer_rules}
 
 *** คุณภาพของตัวเลือก ***
 - ตัวเลือกลวงทุกตัวต้องเกี่ยวข้องกับเนื้อหา ห้ามใส่ตัวเลือกที่ไม่มีความหมายเพื่อให้ครบจำนวน
@@ -374,7 +368,11 @@ class QuizService:
             q for q in data.get("questions", [])
             if not QuizService._has_banned_choice(q) and QuizService._is_valid_mcq(q, cc)
         ]
-        return filter_near_dups(questions, exclude_list, threshold=settings.NEAR_DUP_THRESHOLD)
+        return filter_near_dups(
+            questions,
+            [x["question"] for x in QuizService._normalize_exclude(exclude_list)],
+            threshold=P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD),
+        )
 
     @staticmethod
     def _gen_tf_once(
@@ -383,14 +381,10 @@ class QuizService:
         exclude_list: List[str],
         topic_hints: Optional[List[str]] = None,
         difficulty: Optional[str] = "medium",
+        mode: Optional[str] = P.MODE_SOURCE,
     ) -> List[Dict[str, Any]]:
-        exclude_block = ""
-        if exclude_list:
-            exclude_block = (
-                "หลีกเลี่ยงการตั้งคำถามคล้ายกับ:\n"
-                + "\n".join(f"- {q}" for q in exclude_list[: settings.EXCLUDE_LIST_LIMIT])
-                + "\n"
-            )
+        mode = P.normalize_mode(mode)
+        exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
         topic_block = ""
         if topic_hints:
             topic_block = (
@@ -399,14 +393,16 @@ class QuizService:
                 + "\n"
             )
 
-        difficulty_block = QuizService._difficulty_block(difficulty)
+        difficulty_block = P.difficulty_block(difficulty, mode)
+        answer_rules = P.ANSWER_RULES_TF[mode]
+        rules_block = (answer_rules + "\n\n") if answer_rules else ""
 
         prompt = f"""
 สร้างข้อสอบ ถูก/ผิด จำนวน {n} ข้อ จากเนื้อหาด้านล่าง
 - ให้เหตุผลสั้น ๆ ทุกข้อ
 - ตอบ JSON: {{"questions":[{{"type":"tf","question":"...","answer":"true|false","explain":"...","topic":"..."}}]}}
 
-{difficulty_block}
+{rules_block}{difficulty_block}
 {topic_block}{exclude_block}
 เนื้อหา:
 {sample_across_document(ctx, settings.CTX_CHAR_LIMIT)}
@@ -418,4 +414,8 @@ class QuizService:
             response_format={"type": "json_object"},
         )
         data = safe_json_loads(r.choices[0].message.content, {"questions": []})
-        return filter_near_dups(data.get("questions", []), exclude_list, threshold=settings.NEAR_DUP_THRESHOLD)
+        return filter_near_dups(
+            data.get("questions", []),
+            [x["question"] for x in QuizService._normalize_exclude(exclude_list)],
+            threshold=P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD),
+        )

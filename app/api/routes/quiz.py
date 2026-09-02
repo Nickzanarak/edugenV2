@@ -22,6 +22,7 @@ def quiz_mcq(body: QuizIn, uid: str = Depends(get_current_user)):
         body.topics,
         body.difficulty,
         body.choices_count,
+        body.mode,
     )
     return {"questions": questions}
 
@@ -34,5 +35,6 @@ def quiz_tf(body: QuizIn, uid: str = Depends(get_current_user)):
         body.exclude,
         body.topics,
         body.difficulty,
+        body.mode,
     )
     return {"questions": questions}
