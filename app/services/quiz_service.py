@@ -34,11 +34,45 @@ class QuizService:
             if isinstance(x, dict):
                 q = str(x.get("question") or "").strip()
                 a = str(x.get("answer") or x.get("answer_text") or "").strip()
+            elif hasattr(x, "question"):
+                # Pydantic แปลง JSON เป็นอ็อบเจ็กต์ ไม่ใช่ dict จึงต้องรับกรณีนี้ด้วย
+                q = str(getattr(x, "question", "") or "").strip()
+                a = str(getattr(x, "answer", "") or "").strip()
             else:
                 q, a = str(x).strip(), ""
             if q:
                 out.append({"question": q, "answer": a})
         return out
+
+    @staticmethod
+    def _is_valid_tf(q: Dict[str, Any], mode: str) -> bool:
+        """ตาข่ายกันพลาดของข้อสอบถูก/ผิด (ไม่ได้พิสูจน์ว่าเฉลยถูกตามความจริง)
+
+        โหมดประยุกต์เพิ่มการเทียบช่อง verdict กับ answer
+        เพราะพบว่า AI คิดคำตอบถูกแต่กรอก answer สลับข้าง
+        """
+        if not str(q.get("question") or "").strip():
+            return False
+
+        ans = str(q.get("answer") or "").strip().lower()
+        if ans in ("true", "จริง", "ถูก", "t", "1"):
+            ans = "true"
+        elif ans in ("false", "เท็จ", "ผิด", "f", "0"):
+            ans = "false"
+        else:
+            return False
+
+        if P.normalize_mode(mode) != P.MODE_APPLIED:
+            return True
+
+        verdict = str(q.get("verdict") or "").strip()
+        if not verdict:
+            return False
+        if verdict == P.VERDICT_TRUE:
+            return ans == "true"
+        if verdict == P.VERDICT_FALSE:
+            return ans == "false"
+        return False
 
     @staticmethod
     def _clamp_choices(choices_count: Optional[int]) -> int:
@@ -314,13 +348,7 @@ class QuizService:
     ) -> List[Dict[str, Any]]:
         mode = P.normalize_mode(mode)
         exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
-        topic_block = ""
-        if topic_hints:
-            topic_block = (
-                "ให้สร้าง 'หัวข้อละ 1 ข้อ' จากหัวข้อต่อไปนี้:\n"
-                + "\n".join(f"- {t}" for t in topic_hints[:n])
-                + "\n"
-            )
+        topic_block = P.topic_block(topic_hints, n, mode)
 
         difficulty_block = P.difficulty_block(difficulty, mode)
         answer_rules = P.ANSWER_RULES_MCQ[mode]
@@ -385,22 +413,19 @@ class QuizService:
     ) -> List[Dict[str, Any]]:
         mode = P.normalize_mode(mode)
         exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
-        topic_block = ""
-        if topic_hints:
-            topic_block = (
-                "ให้สร้าง 'หัวข้อละ 1 ข้อ' จากหัวข้อต่อไปนี้:\n"
-                + "\n".join(f"- {t}" for t in topic_hints[:n])
-                + "\n"
-            )
+        topic_block = P.topic_block(topic_hints, n, mode)
 
         difficulty_block = P.difficulty_block(difficulty, mode)
         answer_rules = P.ANSWER_RULES_TF[mode]
         rules_block = (answer_rules + "\n\n") if answer_rules else ""
+        if mode == P.MODE_APPLIED:
+            rules_block += P.TF_VERDICT_RULE
+        tf_json = P.TF_JSON_FORMAT[mode]
 
         prompt = f"""
 สร้างข้อสอบ ถูก/ผิด จำนวน {n} ข้อ จากเนื้อหาด้านล่าง
 - ให้เหตุผลสั้น ๆ ทุกข้อ
-- ตอบ JSON: {{"questions":[{{"type":"tf","question":"...","answer":"true|false","explain":"...","topic":"..."}}]}}
+- ตอบ JSON: {tf_json}
 
 {rules_block}{difficulty_block}
 {topic_block}{exclude_block}
@@ -414,8 +439,9 @@ class QuizService:
             response_format={"type": "json_object"},
         )
         data = safe_json_loads(r.choices[0].message.content, {"questions": []})
+        questions = [q for q in data.get("questions", []) if QuizService._is_valid_tf(q, mode)]
         return filter_near_dups(
-            data.get("questions", []),
+            questions,
             [x["question"] for x in QuizService._normalize_exclude(exclude_list)],
             threshold=P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD),
         )
