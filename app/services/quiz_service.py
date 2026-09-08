@@ -45,34 +45,67 @@ class QuizService:
         return out
 
     @staticmethod
-    def _is_valid_tf(q: Dict[str, Any], mode: str) -> bool:
-        """ตาข่ายกันพลาดของข้อสอบถูก/ผิด (ไม่ได้พิสูจน์ว่าเฉลยถูกตามความจริง)
+    def _is_valid_tf(q: Dict[str, Any]) -> bool:
+        """ตาข่ายกันพลาด: ตรวจแค่รูปแบบว่าข้อสอบถูก/ผิดใช้งานได้ (มีคำถาม, answer ตีความได้)
 
-        โหมดประยุกต์เพิ่มการเทียบช่อง verdict กับ answer
-        เพราะพบว่า AI คิดคำตอบถูกแต่กรอก answer สลับข้าง
+        ไม่ได้พิสูจน์ว่าเฉลยถูกตามความจริง — หน้าที่นั้นอยู่ที่ _review_tf
+        (โหมดประยุกต์เคยมีช่อง verdict ไว้เช็คไขว้ในนี้ด้วย แต่หลังใช้ _review_tf
+        ซึ่งตรวจทานอิสระและทิ้งข้อที่ไม่ตรงกัน verdict ไม่มีผลต่อผลลัพธ์แล้ว จึงตัดออก)
         """
         if not str(q.get("question") or "").strip():
             return False
-
         ans = str(q.get("answer") or "").strip().lower()
-        if ans in ("true", "จริง", "ถูก", "t", "1"):
-            ans = "true"
-        elif ans in ("false", "เท็จ", "ผิด", "f", "0"):
-            ans = "false"
-        else:
-            return False
+        return ans in ("true", "จริง", "ถูก", "t", "1", "false", "เท็จ", "ผิด", "f", "0")
 
-        if P.normalize_mode(mode) != P.MODE_APPLIED:
-            return True
+    @staticmethod
+    def _review_tf(items: List[Dict[str, Any]], mode: str) -> List[Dict[str, Any]]:
+        """ส่งข้อสอบถูก/ผิดกลับไปให้ AI ตัดสินใหม่ทั้งชุด แล้วแก้ข้อที่ไม่ตรงกัน
 
-        verdict = str(q.get("verdict") or "").strip()
-        if not verdict:
-            return False
-        if verdict == P.VERDICT_TRUE:
-            return ans == "true"
-        if verdict == P.VERDICT_FALSE:
-            return ans == "false"
-        return False
+        ใช้เฉพาะโหมดประยุกต์ เพราะโหมดเดิมไม่เคยพบเฉลยผิดจากการทดสอบ
+        ตัวตรวจไม่เห็นเฉลยเดิม จึงตัดสินโดยไม่ถูกชี้นำ แล้วโค้ดเป็นผู้เทียบเอง
+        ถ้าการตรวจล้มเหลวด้วยเหตุใดก็ตาม จะคืนข้อสอบชุดเดิมโดยไม่แก้อะไร
+        """
+        if P.normalize_mode(mode) != P.MODE_APPLIED or not items:
+            return items
+
+        try:
+            with timed("quiz: review", f"{len(items)} ข้อ"):
+                r = client.chat.completions.create(
+                    model=settings.AI_MODEL,
+                    messages=[{"role": "user", "content": P.tf_review_prompt(items)}],
+                    temperature=0,          # ตรวจทานไม่ต้องการความสร้างสรรค์
+                    response_format={"type": "json_object"},
+                )
+            data = safe_json_loads(r.choices[0].message.content, {"results": []})
+        except Exception:
+            return items                     # ตรวจไม่ได้ ก็ใช้ของเดิม ไม่ให้ล้มทั้งคำขอ
+
+        # ผลตัดสินของตัวตรวจ ต่อ index (ไม่เชื่อ 100% แค่ใช้เทียบว่าตรงกับตัวสร้างไหม)
+        verdicts: Dict[int, str] = {}
+        for res in data.get("results", []):
+            try:
+                i = int(res.get("index", -1))
+            except (TypeError, ValueError):
+                continue
+            ans = str(res.get("answer", "")).strip().lower()
+            if 0 <= i < len(items) and ans in ("true", "false"):
+                verdicts[i] = ans
+
+        # ตัวสร้างกับตัวตรวจไม่ตรงกัน = ไม่รู้ว่าใครถูก จึงทิ้งข้อนั้นทั้งข้อ
+        # ปลอดภัยกว่าการเดาว่าฝ่ายไหนถูก เพราะข้อสอบสร้างทดแทนได้ ไม่ใช่ของหายาก
+        kept: List[Dict[str, Any]] = []
+        dropped = 0
+        for i, q in enumerate(items):
+            original = str(q.get("answer", "")).strip().lower()
+            verdict = verdicts.get(i)
+            if verdict is not None and verdict != original:
+                dropped += 1
+                continue
+            kept.append(q)
+
+        if dropped:
+            print(f"[TIME] quiz: review dropped  {dropped} ข้อ (สร้างกับตรวจไม่ตรงกัน)")
+        return kept
 
     @staticmethod
     def _clamp_choices(choices_count: Optional[int]) -> int:
@@ -220,7 +253,11 @@ class QuizService:
             picked = [(i, q) for i, q in picked if q > 0]
 
         exclude_list = QuizService._normalize_exclude(exclude)
-        topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()]
+        # โหมดประยุกต์ไม่ใช้รายการหัวข้อเลย (topic_block คืนค่าว่างเสมอ)
+        # จึงไม่ต้องเสียเวลาสร้าง/กรองรายการนี้
+        topic_list = []
+        if P.normalize_mode(mode) != P.MODE_APPLIED:
+            topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()]
         dup_threshold = P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD)
 
         def work(job):
@@ -302,7 +339,11 @@ class QuizService:
             raise HTTPException(400, "context ว่าง")
 
         exclude_list = QuizService._normalize_exclude(exclude)
-        topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()] or None
+        # โหมดประยุกต์ไม่ใช้รายการหัวข้อเลย (topic_block คืนค่าว่างเสมอ)
+        # จึงไม่ต้องเสียเวลาสร้าง/กรองรายการนี้
+        topic_list = None
+        if P.normalize_mode(mode) != P.MODE_APPLIED:
+            topic_list = [str(t).strip() for t in (topics or []) if str(t).strip()] or None
         dup_threshold = P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD)
 
         collected: List[Dict[str, Any]] = []
@@ -352,6 +393,7 @@ class QuizService:
 
         difficulty_block = P.difficulty_block(difficulty, mode)
         answer_rules = P.ANSWER_RULES_MCQ[mode]
+        shuffle_line = P.shuffle_answer_line(mode)
 
         cc = QuizService._clamp_choices(choices_count)
         letters = QuizService.CHOICE_LETTERS[:cc]
@@ -375,8 +417,7 @@ class QuizService:
 - ความยาวของทุกตัวเลือกต้องใกล้เคียงกัน ห้ามให้ข้อที่ถูกยาวกว่าข้ออื่นอย่างชัดเจน
   (ไม่งั้นผู้สอบเดาได้จากความยาวโดยไม่ต้องอ่านเนื้อหา)
 - ตัวเลือกห้ามซ้ำกันเอง และห้ามมีสองตัวเลือกที่ความหมายเหมือนกัน
-- กระจายตำแหน่งคำตอบที่ถูกให้สม่ำเสมอ อย่าให้อยู่ตำแหน่งเดิมทุกข้อ
-- คำถามต้องอ่านเข้าใจได้ด้วยตัวเอง ห้ามอ้างถึงสิ่งที่ผู้สอบมองไม่เห็น เช่น "จากภาพด้านบน", "ตามตารางนี้"
+{shuffle_line}- คำถามต้องอ่านเข้าใจได้ด้วยตัวเอง ห้ามอ้างถึงสิ่งที่ผู้สอบมองไม่เห็น เช่น "จากภาพด้านบน", "ตามตารางนี้"
 - ถ้าเนื้อหาไม่พอจะสร้างตัวเลือกลวงที่ดีครบ {cc} ตัว ให้เปลี่ยนไปตั้งคำถามจากแง่มุมอื่นของเนื้อหาแทน
 - ตอบ JSON: {{"questions":[{{"type":"mcq","question":"...","choices":[{choices_example}],"answer":"{answer_options}","explain":"...","topic":"..."}}]}}
 
@@ -418,8 +459,6 @@ class QuizService:
         difficulty_block = P.difficulty_block(difficulty, mode)
         answer_rules = P.ANSWER_RULES_TF[mode]
         rules_block = (answer_rules + "\n\n") if answer_rules else ""
-        if mode == P.MODE_APPLIED:
-            rules_block += P.TF_VERDICT_RULE
         tf_json = P.TF_JSON_FORMAT[mode]
 
         prompt = f"""
@@ -439,7 +478,8 @@ class QuizService:
             response_format={"type": "json_object"},
         )
         data = safe_json_loads(r.choices[0].message.content, {"questions": []})
-        questions = [q for q in data.get("questions", []) if QuizService._is_valid_tf(q, mode)]
+        questions = [q for q in data.get("questions", []) if QuizService._is_valid_tf(q)]
+        questions = QuizService._review_tf(questions, mode)
         return filter_near_dups(
             questions,
             [x["question"] for x in QuizService._normalize_exclude(exclude_list)],
