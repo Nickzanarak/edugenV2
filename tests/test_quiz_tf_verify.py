@@ -663,3 +663,44 @@ def test_walk_stride_visits_every_rule_before_repeating(n_rules, count):
     """หัวใจของการแก้: ระยะก้าวต้องหารร่วมกับจำนวนกฎได้ 1"""
     import math as _math
     assert _math.gcd(P._walk_stride(n_rules, count), n_rules) == 1
+
+
+# ----- บังคับให้ส่งสูตรมา เมื่อคำตอบเป็นตัวเลขที่ตรวจได้ -----
+
+def test_mcq_missing_expr_is_rejected_when_answer_is_a_number():
+    """เคสจริง ข้อ 15: คำอธิบายสรุปเอง n = 7 แต่กรอกเฉลย "พจน์ที่ 8"
+
+    AI ไม่ส่งสูตรมาเพราะเห็นคำตอบมีตัวหนังสือปน เลยคิดว่าไม่ใช่ตัวเลข
+    ผลคือไม่มีใครตรวจ เฉลยผิดจึงหลุดออกไป
+    """
+    q = {"type": "mcq", "angle": "reverse",
+         "question": "ลำดับเลขคณิตพจน์แรก 9 ผลต่างร่วม 6 ค่า 45 เป็นพจน์ที่เท่าใด",
+         "answer": "ข",
+         "choices": ["ก) พจน์ที่ 7", "ข) พจน์ที่ 8", "ค) พจน์ที่ 9", "ง) พจน์ที่ 6"]}
+    assert QuizService._mcq_math_ok(q, 4) is False
+
+
+def test_mcq_with_expr_on_worded_number_is_checked():
+    """ส่งสูตรมาแล้ว ต้องตรวจได้จริงแม้คำตอบจะมีคำประกอบ"""
+    base = {"type": "mcq", "angle": "reverse",
+            "question": "ลำดับเลขคณิตพจน์แรก 9 ผลต่างร่วม 6 ค่า 45 เป็นพจน์ที่เท่าใด",
+            "choices": ["ก) พจน์ที่ 7", "ข) พจน์ที่ 8", "ค) พจน์ที่ 9", "ง) พจน์ที่ 6"]}
+    assert QuizService._mcq_math_ok({**base, "answer": "ก", "expr": "(45-9)/6+1"}, 4) is True
+    assert QuizService._mcq_math_ok({**base, "answer": "ข", "expr": "(45-9)/6+1"}, 4) is False
+
+
+def test_language_question_without_expr_is_not_rejected():
+    """วิชาภาษา คำตอบบังเอิญมีตัวเลข แต่ไม่ใช่การคำนวณ ต้องไม่ถูกทิ้ง"""
+    q = {"type": "mcq", "angle": "value",
+         "question": "ข้อใดใช้ present perfect ได้ถูกต้อง",
+         "answer": "ก",
+         "choices": ["ก) She has read 2 books", "ข) อื่น", "ค) อื่น", "ง) อื่น"]}
+    assert QuizService._mcq_math_ok(q, 4) is None
+
+
+def test_concept_answer_without_numbers_is_not_rejected():
+    q = {"type": "mcq", "angle": "value",
+         "question": "ลำดับที่มีพจน์แรก 5 และผลต่างร่วม 2 เป็นลำดับแบบใด",
+         "answer": "ก",
+         "choices": ["ก) ลำดับเลขคณิต", "ข) ลำดับเรขาคณิต", "ค) ไม่ใช่ทั้งสอง", "ง) ลำดับฟีโบนักชี"]}
+    assert QuizService._mcq_math_ok(q, 4) is None

@@ -516,9 +516,6 @@ class QuizService:
         (โจทย์ที่นั่งโรงละคร AI เขียนวิธีถูกหมด แต่คูณผิด 4.5x48 ได้ 180
          แถมคำตอบจริง 216 ไม่มีอยู่ในตัวเลือกเลยสักข้อ)
         """
-        expr = str(q.get("expr") or "").strip()
-        if not expr:
-            return None
         # มุมที่คำตอบไม่ใช่ตัวเลขเดี่ยว (เช่น "ชุดที่ 3") ตรวจแบบนี้ไม่ได้
         if QuizService._angle_of(q) in P.TF_ANGLES_WITHOUT_EXPR:
             return None
@@ -533,6 +530,19 @@ class QuizService:
         nums = safe_math.number_strings_in_text(text)
         if len(nums) != 1:
             return None      # ตัวเลือกมีหลายตัวเลขหรือไม่มีเลย ตัดสินไม่ได้
+
+        # ต้องเป็นโจทย์คำนวณจริง ๆ ถึงจะบังคับให้ส่งสูตรมา
+        # ดูจากว่าตัวคำถามมีตัวเลขให้คำนวณอย่างน้อย 2 ตัวหรือไม่
+        # กันวิชาภาษาที่คำตอบบังเอิญมีตัวเลขปนอยู่ แต่ไม่ได้เป็นการคำนวณ
+        looks_numeric = len(safe_math.number_strings_in_text(str(q.get("question") or ""))) >= 2
+
+        expr = str(q.get("expr") or "").strip()
+        if not expr:
+            # ตรวจได้แต่ไม่ส่งสูตรมา = ไม่ให้ผ่าน
+            # เดิมปล่อยผ่าน ทำให้ข้อที่ AI คิดถูกแต่กรอกเฉลยผิดหลุดออกไป
+            # (โจทย์ "45 เป็นพจน์ที่เท่าใด" คำอธิบายสรุปเอง n = 7 แต่กรอกเฉลย 8)
+            return False if looks_numeric else None
+
         try:
             return safe_math.matches(expr, nums[0])
         except safe_math.UnsafeExpression:
