@@ -379,12 +379,20 @@ def test_angle_full_now_covers_mcq():
     assert QuizService._angle_full("value", collected, "mcq", "applied", 2) is True
 
 
-def test_angle_cap_forces_at_least_three_angles():
-    # ขอ 15 ข้อ -> มุมละไม่เกิน 5 ข้อ = ต้องมีอย่างน้อย 3 มุม
-    assert P.angle_cap(15) == 5
-    assert P.angle_cap(6) == 2
-    assert P.angle_cap(1) == 2
-    assert P.angle_cap(15, tries=2) == 6      # ผ่อนเมื่อหาไม่ครบ
+def test_angle_cap_forces_several_angles():
+    assert P.angle_cap(15, n_angles=5) == 4   # 5 มุม x 4 = 20 พอสำหรับ 15 ข้อ
+    assert P.angle_cap(1, n_angles=5) == 2
+    assert P.angle_cap(15, tries=2, n_angles=5) == 5   # ผ่อนเมื่อหาไม่ครบ
+
+
+def test_angle_cap_scales_with_how_many_angles_are_allowed():
+    """ระดับยากใช้ได้แค่ 2 มุม เพดานต้องโตตาม ไม่งั้นสองกฎจะล็อกกันเอง
+
+    ถ้าเพดานยังเป็น 2 จะได้อย่างมาก 2x2 = 4 ข้อ ทั้งที่ผู้ใช้ขอ 5
+    แล้วระบบจะวนหาไม่ครบไปเรื่อย ๆ
+    """
+    cap = P.angle_cap(5, n_angles=2)
+    assert cap * 2 >= 5
 
 
 def test_overused_angles_lists_only_full_ones():
@@ -704,3 +712,59 @@ def test_concept_answer_without_numbers_is_not_rejected():
          "answer": "ก",
          "choices": ["ก) ลำดับเลขคณิต", "ข) ลำดับเรขาคณิต", "ค) ไม่ใช่ทั้งสอง", "ง) ลำดับฟีโบนักชี"]}
     assert QuizService._mcq_math_ok(q, 4) is None
+
+
+# ----- บังคับมุมตามระดับ พร้อมตัวถอยอัตโนมัติ -----
+
+def _angled(angle):
+    return {"type": "mcq", "question": "โจทย์", "answer": "ก", "angle": angle}
+
+
+def test_hard_rejects_situation_at_first():
+    """ห่อโจทย์ง่ายด้วยเรื่องเล่า ไม่ได้ทำให้ยากขึ้น จึงไม่ควรอยู่ในระดับยาก"""
+    assert QuizService._angle_allowed(_angled("situation"), "hard", "applied", tries=0) is False
+    assert QuizService._angle_allowed(_angled("reverse"), "hard", "applied", tries=0) is True
+    assert QuizService._angle_allowed(_angled("compare"), "hard", "applied", tries=0) is True
+
+
+def test_easy_rejects_reverse():
+    """กติกาข้อง่ายเขียนไว้ว่าห้ามถามย้อนจากผลลัพธ์"""
+    assert QuizService._angle_allowed(_angled("reverse"), "easy", "applied", tries=0) is False
+    assert QuizService._angle_allowed(_angled("value"), "easy", "applied", tries=0) is True
+
+
+def test_relaxes_after_a_couple_of_failed_rounds():
+    """เนื้อหาที่ทำมุมเข้ม ๆ ไม่ไหว ต้องไม่ถูกบังคับจนออกข้อสอบไม่ได้"""
+    q = _angled("situation")
+    assert QuizService._angle_allowed(q, "hard", "applied", tries=0) is False
+    assert QuizService._angle_allowed(q, "hard", "applied", tries=2) is True   # ผ่อนขั้นแรก
+    assert QuizService._angle_allowed(q, "hard", "applied", tries=4) is True   # เลิกบังคับ
+
+
+def test_gives_up_enforcing_entirely_at_the_end():
+    """รอบท้าย ๆ ต้องรับทุกมุม ไม่งั้นเอกสารบางจะได้ข้อสอบน้อยเกินไป"""
+    for angle in P.TF_ANGLES:
+        assert QuizService._angle_allowed(_angled(angle), "easy", "applied", tries=4) is True
+
+
+def test_angle_rule_off_for_source_mode():
+    assert QuizService._angle_allowed(_angled("compare"), "easy", "source", tries=0) is True
+
+
+def test_question_without_declared_angle_passes():
+    """ไม่ได้แจ้งมุมมา = ไม่มีข้อมูลพอจะตัดสิน ต้องไม่ทิ้ง (กันวิชาที่ AI ไม่แจ้ง)"""
+    q = {"type": "mcq", "question": "โจทย์", "answer": "ก"}
+    assert QuizService._angle_allowed(q, "hard", "applied", tries=0) is True
+
+
+def test_angles_widen_step_by_step():
+    assert set(P.angles_for("hard", 0)) == {"reverse", "compare"}
+    assert set(P.angles_for("hard", 2)) == {"reverse", "compare", "situation"}
+    assert set(P.angles_for("hard", 4)) == set(P.TF_ANGLES)
+
+
+def test_angle_guide_block_follows_the_relaxation():
+    strict = P.angle_guide_block("hard", "applied", "mcq", tries=0)
+    loose = P.angle_guide_block("hard", "applied", "mcq", tries=4)
+    assert "situation" not in strict          # ยังไม่ผ่อน ห้ามใช้
+    assert "situation" in loose               # ผ่อนแล้ว บอก AI ด้วย

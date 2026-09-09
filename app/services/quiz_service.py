@@ -318,6 +318,29 @@ class QuizService:
         return angle if angle in P.TF_ANGLES else None
 
     @staticmethod
+    def _angle_allowed(
+        q: Dict[str, Any],
+        difficulty: Optional[str],
+        mode: str,
+        tries: int = 0,
+    ) -> bool:
+        """มุมของข้อนี้ เข้ากับระดับความยากที่ผู้ใช้เลือกไหม
+
+        เดิมบอกไว้ใน prompt เฉย ๆ ไม่มีโค้ดตรวจ AI จึงไม่ทำตาม
+        วัดจากของจริง: ชุด "ง่าย" มีข้อถามย้อน (ซึ่งกติกาข้อง่ายห้ามไว้)
+        และชุด "ยาก" มีข้อที่แค่ห่อเรื่องเล่า ง่ายเท่ากับชุดง่าย
+
+        รายการมุมที่ใช้ได้จะกว้างขึ้นเองเมื่อหาข้อไม่ครบ (ดู angles_for)
+        เอกสารที่ทำมุมเข้ม ๆ ไม่ไหวจึงไม่ถูกบังคับจนออกข้อสอบไม่ได้
+        """
+        if P.normalize_mode(mode) != P.MODE_APPLIED:
+            return True
+        angle = QuizService._angle_of(q)
+        if not angle:
+            return True      # ไม่ได้แจ้งมุมมา ไม่มีข้อมูลพอจะตัดสิน ปล่อยผ่าน
+        return angle in P.angles_for(difficulty, tries)
+
+    @staticmethod
     def _angle_full(
         angle: Optional[str],
         collected: List[Dict[str, Any]],
@@ -840,27 +863,26 @@ class QuizService:
             topic_hints = topic_list[:need] if topic_list else None
             request_n = need + 5
 
+            # ยิ่งพยายามมาหลายรอบแล้วยังไม่ครบ ยิ่งผ่อนให้
+            # ได้ข้อครบตามที่ผู้ใช้ขอ ดีกว่าคืนไม่ครบเพราะเนื้อหามีมุม/โครงให้ใช้จำกัด
+            cap = P.structure_cap(tries)
+            allowed_angles = P.angles_for(difficulty, tries)
+            acap = P.angle_cap(count, tries, len(allowed_angles))
+
             # โครง/มุมที่ใช้ครบโควตาแล้ว บอก AI ไปด้วยว่าห้ามออกซ้ำ (ใช้ทั้งปรนัยและถูก/ผิด)
             avoid = QuizService._overused_questions(collected, qtype, mode, prior=prior)
-            avoid_angles = QuizService._overused_angles(
-                collected, qtype, mode, P.angle_cap(count, tries)
-            )
+            avoid_angles = QuizService._overused_angles(collected, qtype, mode, acap)
 
             if qtype == "mcq":
                 batch = QuizService._gen_mcq_once(
                     ctx, request_n, excludes_now, topic_hints, difficulty, choices_count, mode,
-                    avoid, avoid_angles, rule_plan,
+                    avoid, avoid_angles, rule_plan, tries,
                 )
             else:
                 batch = QuizService._gen_tf_split(
                     ctx, request_n, excludes_now, topic_hints, difficulty, mode,
-                    avoid, avoid_angles, rule_plan, collected,
+                    avoid, avoid_angles, rule_plan, collected, tries,
                 )
-
-            # ยิ่งพยายามมาหลายรอบแล้วยังไม่ครบ ยิ่งผ่อนเพดานให้
-            # ได้ข้อครบตามที่ผู้ใช้ขอ ดีกว่าคืนไม่ครบเพราะเนื้อหามีมุม/โครงให้ใช้จำกัด
-            cap = P.structure_cap(tries)
-            acap = P.angle_cap(count, tries)
 
             for q in batch:
                 if len(collected) >= count:
@@ -870,6 +892,9 @@ class QuizService:
                     continue
                 if QuizService._is_concept_duplicate(q, collected, qtype, mode):
                     continue            # ถามซ้ำของเดิมจริง ๆ ไม่เก็บสำรองด้วย
+                if not QuizService._angle_allowed(q, difficulty, mode, tries):
+                    spare.append(q)     # มุมไม่เข้ากับระดับความยากที่ผู้ใช้เลือก
+                    continue
                 if QuizService._structure_full(text, collected, qtype, mode, prior, cap):
                     spare.append(q)     # โครงประโยคนี้มีพอแล้ว รอบหน้าจะขอแบบอื่นแทน
                     continue
@@ -912,6 +937,7 @@ class QuizService:
         avoid: Optional[List[str]] = None,
         avoid_angles: Optional[List[str]] = None,
         rule_plan: Optional[List[Tuple[str, int]]] = None,
+        tries: int = 0,
     ) -> List[Dict[str, Any]]:
         mode = P.normalize_mode(mode)
         exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
@@ -930,7 +956,7 @@ class QuizService:
         # โหมดเดิมได้ข้อความเดิมทุกตัวอักษร โหมดประยุกต์ได้บล็อกความหลากหลายเพิ่ม
         mcq_json = P.mcq_json_format(mode, choices_example, answer_options)
         avoid_block = (
-            P.angle_guide_block(difficulty, mode, "mcq")
+            P.angle_guide_block(difficulty, mode, "mcq", tries)
             + P.tf_avoid_structure_block(avoid, mode)
             + P.tf_avoid_angle_block(avoid_angles, mode)
             + P.rule_quota_block(
@@ -1003,6 +1029,7 @@ class QuizService:
         avoid_angles: Optional[List[str]],
         rule_plan: Optional[List[Tuple[str, int]]],
         collected: List[Dict[str, Any]],
+        tries: int = 0,
     ) -> List[Dict[str, Any]]:
         """ขอข้อสอบถูก/ผิด โดยแยกฝั่ง "จริง" กับ "เท็จ" เป็นคนละคำสั่ง ยิงพร้อมกัน
 
@@ -1034,7 +1061,7 @@ class QuizService:
             try:
                 return QuizService._gen_tf_once(
                     ctx, quota, exclude_list, topic_hints, difficulty, mode,
-                    want, avoid, avoid_angles, rule_plan,
+                    want, avoid, avoid_angles, rule_plan, tries,
                 )
             except Exception:
                 return []       # ฝั่งเดียวพัง ไม่ให้ล้มทั้งรอบ
@@ -1064,6 +1091,7 @@ class QuizService:
         avoid: Optional[List[str]] = None,
         avoid_angles: Optional[List[str]] = None,
         rule_plan: Optional[List[Tuple[str, int]]] = None,
+        tries: int = 0,
     ) -> List[Dict[str, Any]]:
         mode = P.normalize_mode(mode)
         exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
@@ -1074,7 +1102,7 @@ class QuizService:
         rules_block = (answer_rules + "\n\n") if answer_rules else ""
         want_block = P.tf_want_block(want, mode)
         avoid_block = (
-            P.angle_guide_block(difficulty, mode, "tf")
+            P.angle_guide_block(difficulty, mode, "tf", tries)
             + P.tf_avoid_structure_block(avoid, mode)
             + P.tf_avoid_angle_block(avoid_angles, mode)
             + P.rule_quota_block(

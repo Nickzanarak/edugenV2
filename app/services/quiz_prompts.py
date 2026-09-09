@@ -291,24 +291,51 @@ _ANGLE_DESC = {
 
 # ง่าย  = ใช้กฎเดียว ตรงไปตรงมา จึงให้เฉพาะมุมที่ไม่ต้องคิดย้อนหรือเทียบหลายกรณี
 # ปานกลาง = เพิ่มมุมที่ต้องแปลงข้อมูลหนึ่งชั้น (ตรงกับนิยาม "ถามย้อนจากผลลัพธ์")
-# ยาก   = มุมที่บังคับให้ใช้หลายกฎหรือหลายกรณีโดยธรรมชาติ
+# ยาก   = เฉพาะมุมที่บังคับให้คิดหลายชั้นโดยธรรมชาติ
+#
+# ระดับยากตัด situation ออก เพราะวัดจากของจริงแล้วพบว่าการห่อโจทย์ง่าย ๆ
+# ด้วยเรื่องเล่า ไม่ได้ทำให้ยากขึ้นเลย ("แผ่นป้ายกว้าง 9 ยาว 4 พื้นที่เท่าใด"
+# ในชุดยาก ง่ายเท่ากับ "ผืนผ้ากว้าง 7 ยาว 8 พื้นที่เท่าใด" ในชุดง่าย)
 ANGLES_BY_DIFFICULTY = {
     "easy": ("value", "situation"),
     "medium": ("value", "situation", "reverse", "property"),
-    "hard": ("reverse", "compare", "situation"),
+    "hard": ("reverse", "compare"),
+}
+
+# มุมที่ยอมเพิ่มให้เมื่อผ่อนขั้นแรก (เนื้อหาทำมุมเข้ม ๆ ไม่ไหว)
+_ANGLES_RELAXED = {
+    "easy": ("property",),
+    "medium": (),
+    "hard": ("situation",),
 }
 
 
-def angles_for(difficulty) -> tuple:
+def angles_for(difficulty, tries: int = 0) -> tuple:
+    """มุมที่ใช้ได้กับระดับความยากนี้ ยิ่งหาข้อไม่ครบหลายรอบ ยิ่งผ่อนให้
+
+    เหตุผลที่ต้องผ่อนได้: เนื้อหาบางเรื่องทำมุมที่กำหนดไว้ไม่ไหวจริง ๆ
+    ถ้าบังคับตายตัวจะกลายเป็นไล่ล่าของที่ไม่มีอยู่ เสียเวลายิง AI ซ้ำ ๆ เปล่า ๆ
+    ระบบจึงเริ่มเข้มก่อน แล้วดูจากผลจริงของเอกสารนั้นว่าต้องผ่อนหรือไม่
+    ไม่ต้องเดาว่าเป็นวิชาอะไร
+
+    รอบ 0-1 = เข้ม | รอบ 2-3 = ผ่อนหนึ่งขั้น | รอบ 4+ = เลิกบังคับ
+    """
     key = (difficulty or "medium").strip().lower()
-    return ANGLES_BY_DIFFICULTY.get(key, ANGLES_BY_DIFFICULTY["medium"])
+    if key not in ANGLES_BY_DIFFICULTY:
+        key = "medium"
+    step = max(0, int(tries)) // 2
+    if step <= 0:
+        return ANGLES_BY_DIFFICULTY[key]
+    if step == 1:
+        return ANGLES_BY_DIFFICULTY[key] + _ANGLES_RELAXED.get(key, ())
+    return TF_ANGLES
 
 
-def angle_guide_block(difficulty, mode, qtype: str = "tf") -> str:
+def angle_guide_block(difficulty, mode, qtype: str = "tf", tries: int = 0) -> str:
     """บล็อกอธิบายมุมของโจทย์ เปิดเฉพาะมุมที่เข้ากับระดับความยากนั้น"""
     if normalize_mode(mode) != MODE_APPLIED:
         return ""
-    allowed = angles_for(difficulty)
+    allowed = angles_for(difficulty, tries)
     lines = []
     for code in allowed:
         what, example = _ANGLE_DESC[code]
@@ -571,10 +598,18 @@ def structure_cap(tries: int = 0) -> int:
 # จึงต้องคุมที่ "มุม" อีกชั้น ให้ชุดหนึ่งมีอย่างน้อย 3 มุมที่ต่างกัน
 # ---------------------------------------------------------------------------
 
-def angle_cap(count: int, tries: int = 0) -> int:
-    """มุมเดียวใช้ได้กี่ข้อ ~1 ใน 3 ของชุด (อย่างน้อย 2) ผ่อนเพิ่มเมื่อหาไม่ครบ"""
+def angle_cap(count: int, tries: int = 0, n_angles: int = 0) -> int:
+    """มุมเดียวใช้ได้กี่ข้อ
+
+    ต้องคิดจาก "จำนวนมุมที่ใช้ได้จริงในระดับนั้น" ไม่ใช่จำนวนมุมทั้งหมด
+    ไม่งั้นสองกฎจะล็อกกันเอง เช่นระดับยากใช้ได้ 2 มุม ถ้าเพดานเป็น 2
+    จะได้อย่างมาก 4 ข้อ ทั้งที่ผู้ใช้ขอ 5 ข้อ แล้ววนหาไม่ครบไปเรื่อย ๆ
+
+    เผื่อไว้ 1 ข้อเสมอ เพื่อให้มีที่ขยับ แต่ยังบังคับให้ต้องใช้หลายมุมอยู่
+    """
     n = max(1, int(count or 1))
-    base = max(2, -(-n // 3))          # ปัดขึ้น
+    k = max(1, int(n_angles) or len(TF_ANGLES))
+    base = max(2, -(-n // k) + 1)      # ปัดขึ้น แล้วเผื่ออีก 1
     return base + max(0, tries) // 2
 
 
