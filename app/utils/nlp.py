@@ -58,6 +58,25 @@ def dice_bigram(a: str, b: str) -> float:
 def similar(a: str, b: str) -> float:
     return max(jaccard(a, b), dice_bigram(a, b))
 
+
+_NUM_RE = re.compile(r"-?\d+(?:[.,/]\d+)*")
+
+
+def question_skeleton(s: str) -> str:
+    """ลบตัวเลขออกจากคำถาม เหลือแต่ "โครง" ของประโยค
+
+    ใช้แยกสองอย่างที่ต่างกันออกจากกัน
+      - "สูตรเดิม แต่เปลี่ยนตัวเลข"   -> โหมดประยุกต์ตั้งใจให้เป็นแบบนี้ ต้องปล่อยผ่าน
+      - "โครงประโยคเดิม ซ้ำ ๆ ทั้งชุด" -> น่าเบื่อ ต้องจำกัดจำนวน
+
+    ตัวกรองข้อซ้ำปกติแยกสองอย่างนี้ไม่ออก เพราะวัดจากข้อความที่มีตัวเลขอยู่ด้วย
+    พอลบตัวเลขทิ้งก่อนแล้วค่อยวัด สองอย่างนี้จึงแยกออกจากกันได้
+    """
+    t = _NUM_RE.sub(" # ", s or "")
+    t = re.sub(r"[^\w\s#]", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.strip().lower()
+
 def filter_near_dups(items: List[Dict[str, Any]], exclude: List[str], threshold: float = None) -> List[Dict[str, Any]]:
     if threshold is None:
         threshold = settings.NEAR_DUP_THRESHOLD
