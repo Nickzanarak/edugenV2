@@ -215,7 +215,6 @@ class QuizService:
     def _structure_full(
         question: str,
         collected: List[Dict[str, Any]],
-        qtype: str,
         mode: str,
         prior: Optional[List[str]] = None,
         cap: Optional[int] = None,
@@ -245,7 +244,6 @@ class QuizService:
     @staticmethod
     def _overused_questions(
         collected: List[Dict[str, Any]],
-        qtype: str,
         mode: str,
         limit: int = 3,
         prior: Optional[List[str]] = None,
@@ -344,7 +342,6 @@ class QuizService:
     def _angle_full(
         angle: Optional[str],
         collected: List[Dict[str, Any]],
-        qtype: str,
         mode: str,
         cap: int,
     ) -> bool:
@@ -362,7 +359,6 @@ class QuizService:
     @staticmethod
     def _overused_angles(
         collected: List[Dict[str, Any]],
-        qtype: str,
         mode: str,
         cap: int,
     ) -> List[str]:
@@ -396,10 +392,7 @@ class QuizService:
         """
         if P.normalize_mode(mode) != P.MODE_APPLIED or not collected:
             return None
-        n_true = sum(
-            1 for q in collected
-            if str(q.get("answer", "")).strip().lower() in QuizService._TF_TRUE_WORDS
-        )
+        n_true = sum(1 for q in collected if QuizService._is_true_answer(q))
         n_false = len(collected) - n_true
         if n_true - n_false >= 2:
             return "false"
@@ -464,7 +457,7 @@ class QuizService:
                     difficulty,
                     mode,
                     want,
-                    QuizService._overused_questions(kept, qtype, mode, prior=prior),
+                    QuizService._overused_questions(kept, mode, prior=prior),
                 )
         except Exception:
             return collected        # ปรับไม่ได้ ก็ใช้ของเดิม ดีกว่าล้มทั้งคำขอ
@@ -481,7 +474,7 @@ class QuizService:
                 continue
             # ผ่อนเพดานตอนสลับ ไม่งั้นโครงเต็มแล้วจะสลับไม่สำเร็จ เฉลยก็เอียงต่อไป
             if QuizService._structure_full(
-                text, kept + fresh, qtype, mode, prior, P.structure_cap(2)
+                text, kept + fresh, mode, prior, P.structure_cap(2)
             ):
                 continue
             fresh.append(q)
@@ -493,6 +486,32 @@ class QuizService:
         out = kept + fresh + removed[len(fresh):]
         print(f"[TIME] quiz: rebalance สลับ {len(fresh)} ข้อ เป็นฝั่ง {want}")
         return out
+
+    @staticmethod
+    def _guidance_block(
+        qtype: str,
+        difficulty: Optional[str],
+        mode: str,
+        n: int,
+        avoid: Optional[List[str]],
+        avoid_angles: Optional[List[str]],
+        rule_plan: Optional[List[Tuple[str, int]]],
+        tries: int,
+    ) -> str:
+        """คำสั่งเสริมของโหมดประยุกต์ที่ต่อท้าย prompt — ปรนัยกับถูก/ผิดใช้ชุดเดียวกัน
+
+        รวมไว้ที่เดียวเพราะเดิมเขียนซ้ำกันสองที่ ถ้าเพิ่มบล็อกใหม่แล้วลืมแก้ที่ใดที่หนึ่ง
+        รูปแบบข้อสอบสองแบบจะได้คำสั่งไม่เท่ากันโดยไม่มีใครรู้
+        โหมดเดิมได้ค่าว่างทุกบล็อก prompt จึงไม่เปลี่ยนแม้แต่ตัวอักษรเดียว
+        """
+        return (
+            P.angle_guide_block(difficulty, mode, qtype, tries)
+            + P.tf_avoid_structure_block(avoid, mode)
+            + P.tf_avoid_angle_block(avoid_angles, mode)
+            + P.rule_quota_block(
+                P.plan_rule_quota([r for r, _ in (rule_plan or [])], n), mode, difficulty
+            )
+        )
 
     @staticmethod
     def _clamp_choices(choices_count: Optional[int]) -> int:
@@ -781,10 +800,10 @@ class QuizService:
                     continue
                 if QuizService._is_concept_duplicate(q, collected, qtype, mode):
                     continue
-                if QuizService._structure_full(text, collected, qtype, mode, prior):
+                if QuizService._structure_full(text, collected, mode, prior):
                     continue
                 if QuizService._angle_full(
-                    QuizService._angle_of(q), collected, qtype, mode, P.angle_cap(count)
+                    QuizService._angle_of(q), collected, mode, P.angle_cap(count)
                 ):
                     continue      # แต่ละก้อนมองไม่เห็นกัน ต้องคุมมุมตอนรวมผลด้วย
                 collected.append(q)
@@ -807,7 +826,7 @@ class QuizService:
                         continue
                     # รอบเก็บตกแล้ว ผ่อนเพดานให้เหมือนกัน ไม่งั้นเก็บตกไม่ได้เลย
                     if QuizService._structure_full(
-                        text, collected, qtype, mode, prior, P.structure_cap(2)
+                        text, collected, mode, prior, P.structure_cap(2)
                     ):
                         continue
                     collected.append(q)
@@ -870,8 +889,8 @@ class QuizService:
             acap = P.angle_cap(count, tries, len(allowed_angles))
 
             # โครง/มุมที่ใช้ครบโควตาแล้ว บอก AI ไปด้วยว่าห้ามออกซ้ำ (ใช้ทั้งปรนัยและถูก/ผิด)
-            avoid = QuizService._overused_questions(collected, qtype, mode, prior=prior)
-            avoid_angles = QuizService._overused_angles(collected, qtype, mode, acap)
+            avoid = QuizService._overused_questions(collected, mode, prior=prior)
+            avoid_angles = QuizService._overused_angles(collected, mode, acap)
 
             if qtype == "mcq":
                 batch = QuizService._gen_mcq_once(
@@ -895,10 +914,10 @@ class QuizService:
                 if not QuizService._angle_allowed(q, difficulty, mode, tries):
                     spare.append(q)     # มุมไม่เข้ากับระดับความยากที่ผู้ใช้เลือก
                     continue
-                if QuizService._structure_full(text, collected, qtype, mode, prior, cap):
+                if QuizService._structure_full(text, collected, mode, prior, cap):
                     spare.append(q)     # โครงประโยคนี้มีพอแล้ว รอบหน้าจะขอแบบอื่นแทน
                     continue
-                if QuizService._angle_full(QuizService._angle_of(q), collected, qtype, mode, acap):
+                if QuizService._angle_full(QuizService._angle_of(q), collected, mode, acap):
                     spare.append(q)     # มุมนี้มีพอแล้ว ต้องให้มุมอื่นได้ที่บ้าง
                     continue
                 collected.append(q)
@@ -955,13 +974,8 @@ class QuizService:
 
         # โหมดเดิมได้ข้อความเดิมทุกตัวอักษร โหมดประยุกต์ได้บล็อกความหลากหลายเพิ่ม
         mcq_json = P.mcq_json_format(mode, choices_example, answer_options)
-        avoid_block = (
-            P.angle_guide_block(difficulty, mode, "mcq", tries)
-            + P.tf_avoid_structure_block(avoid, mode)
-            + P.tf_avoid_angle_block(avoid_angles, mode)
-            + P.rule_quota_block(
-                P.plan_rule_quota([r for r, _ in (rule_plan or [])], n), mode, difficulty
-            )
+        avoid_block = QuizService._guidance_block(
+            "mcq", difficulty, mode, n, avoid, avoid_angles, rule_plan, tries
         )
 
         prompt = f"""
@@ -1101,13 +1115,8 @@ class QuizService:
         answer_rules = P.ANSWER_RULES_TF[mode]
         rules_block = (answer_rules + "\n\n") if answer_rules else ""
         want_block = P.tf_want_block(want, mode)
-        avoid_block = (
-            P.angle_guide_block(difficulty, mode, "tf", tries)
-            + P.tf_avoid_structure_block(avoid, mode)
-            + P.tf_avoid_angle_block(avoid_angles, mode)
-            + P.rule_quota_block(
-                P.plan_rule_quota([r for r, _ in (rule_plan or [])], n), mode, difficulty
-            )
+        avoid_block = QuizService._guidance_block(
+            "tf", difficulty, mode, n, avoid, avoid_angles, rule_plan, tries
         )
         tf_json = P.TF_JSON_FORMAT[mode]
 

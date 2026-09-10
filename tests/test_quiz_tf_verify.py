@@ -201,47 +201,41 @@ _SUM_FORMULA = "ผลบวก 6 พจน์แรกของลำดับ�
 
 def test_structure_full_blocks_third_clone():
     collected = [{"question": q} for q in _NTH_TERM[:2]]
-    assert QuizService._structure_full(_NTH_TERM[2], collected, "tf", "applied") is True
+    assert QuizService._structure_full(_NTH_TERM[2], collected, "applied") is True
 
 
 def test_structure_full_allows_second_of_a_shape():
     collected = [{"question": _NTH_TERM[0]}]
-    assert QuizService._structure_full(_NTH_TERM[1], collected, "tf", "applied") is False
+    assert QuizService._structure_full(_NTH_TERM[1], collected, "applied") is False
 
 
 def test_structure_full_allows_different_shape():
     """สูตรผลบวก เป็นคนละโครงกับสูตรพจน์ที่ n จึงต้องผ่าน"""
     collected = [{"question": q} for q in _NTH_TERM[:2]]
-    assert QuizService._structure_full(_SUM_FORMULA, collected, "tf", "applied") is False
+    assert QuizService._structure_full(_SUM_FORMULA, collected, "applied") is False
 
 
 def test_structure_full_off_for_source_mode():
     collected = [{"question": q} for q in _NTH_TERM[:2]]
-    assert QuizService._structure_full(_NTH_TERM[2], collected, "tf", "source") is False
-
-
-def test_structure_full_now_covers_mcq():
-    """ปรนัยโหมดประยุกต์ก็จำเจแบบเดียวกัน จึงต้องคุมด้วย"""
-    collected = [{"question": q} for q in _NTH_TERM[:2]]
-    assert QuizService._structure_full(_NTH_TERM[2], collected, "mcq", "applied") is True
+    assert QuizService._structure_full(_NTH_TERM[2], collected, "source") is False
 
 
 def test_overused_questions_reports_only_full_shapes():
     collected = [{"question": q} for q in _NTH_TERM[:2]] + [{"question": _SUM_FORMULA}]
-    out = QuizService._overused_questions(collected, "tf", "applied")
+    out = QuizService._overused_questions(collected, "applied")
     assert out == [_NTH_TERM[0]]        # โครงพจน์ที่ n เต็มแล้ว / โครงผลบวกยังมีข้อเดียว
 
 
 def test_structure_full_counts_existing_questions(monkeypatch):
     """บั๊กตอนกดขอเพิ่มข้อ: โครงที่ข้อเก่าใช้ไปแล้ว ต้องนับด้วย"""
     prior = _NTH_TERM[:2]                       # ข้อเก่า 2 ข้อ ใช้โครงนี้ไปแล้ว
-    assert QuizService._structure_full(_NTH_TERM[2], [], "tf", "applied", prior) is True
+    assert QuizService._structure_full(_NTH_TERM[2], [], "applied", prior) is True
     # ถ้าไม่ส่งข้อเก่ามา จะมองไม่เห็น (พฤติกรรมเดิมที่เป็นบั๊ก)
-    assert QuizService._structure_full(_NTH_TERM[2], [], "tf", "applied") is False
+    assert QuizService._structure_full(_NTH_TERM[2], [], "applied") is False
 
 
 def test_overused_questions_counts_existing_questions():
-    out = QuizService._overused_questions([], "tf", "applied", prior=_NTH_TERM[:2])
+    out = QuizService._overused_questions([], "applied", prior=_NTH_TERM[:2])
     assert out == [_NTH_TERM[0]]
 
 
@@ -345,9 +339,9 @@ def test_structure_cap_starts_strict_then_relaxes():
 def test_structure_full_respects_explicit_cap():
     collected = [{"question": q} for q in _NTH_TERM[:2]]
     # เพดาน 2 -> ข้อที่ 3 เข้าไม่ได้
-    assert QuizService._structure_full(_NTH_TERM[2], collected, "tf", "applied") is True
+    assert QuizService._structure_full(_NTH_TERM[2], collected, "applied") is True
     # ผ่อนเป็น 3 -> เข้าได้
-    assert QuizService._structure_full(_NTH_TERM[2], collected, "tf", "applied", None, 3) is False
+    assert QuizService._structure_full(_NTH_TERM[2], collected, "applied", None, 3) is False
 
 
 # ----- คุมความหลากหลายด้วย "มุมของโจทย์" -----
@@ -365,18 +359,13 @@ def test_angle_of_reads_known_angles():
 
 def test_angle_full_blocks_when_quota_reached():
     collected = [_q("value"), _q("value")]
-    assert QuizService._angle_full("value", collected, "tf", "applied", 2) is True
-    assert QuizService._angle_full("compare", collected, "tf", "applied", 2) is False
+    assert QuizService._angle_full("value", collected, "applied", 2) is True
+    assert QuizService._angle_full("compare", collected, "applied", 2) is False
 
 
 def test_angle_full_off_for_source_mode():
     collected = [_q("value")] * 5
-    assert QuizService._angle_full("value", collected, "tf", "source", 2) is False
-
-
-def test_angle_full_now_covers_mcq():
-    collected = [_q("value")] * 5
-    assert QuizService._angle_full("value", collected, "mcq", "applied", 2) is True
+    assert QuizService._angle_full("value", collected, "source", 2) is False
 
 
 def test_angle_cap_forces_several_angles():
@@ -397,7 +386,7 @@ def test_angle_cap_scales_with_how_many_angles_are_allowed():
 
 def test_overused_angles_lists_only_full_ones():
     collected = [_q("value"), _q("value"), _q("compare")]
-    assert QuizService._overused_angles(collected, "tf", "applied", 2) == ["value"]
+    assert QuizService._overused_angles(collected, "applied", 2) == ["value"]
 
 
 def test_avoid_angle_block_empty_for_source():
