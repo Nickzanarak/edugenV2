@@ -74,3 +74,26 @@ def test_appears_in_handles_negative_fraction_and_comma():
     assert safe_math.appears_in("พจน์ที่ 6 มีค่าเป็น -4", "-4") is True
     assert safe_math.appears_in("ครึ่งหนึ่งคือ 1/2", "1/2") is True
     assert safe_math.appears_in("ราคารวม 1,250 บาท", "1250") is True
+
+
+# ----- ผลลัพธ์ใหญ่เกิน float ต้องกลายเป็น UnsafeExpression ไม่ใช่หลุดออกไป -----
+
+@pytest.mark.parametrize("huge", [
+    "factorial(171)",       # float(int) โยน OverflowError ไม่ใช่ ValueError
+    "factorial(99999)",
+    "comb(999999, 500000)",
+    "perm(100000, 50000)",
+])
+def test_huge_result_raises_unsafe_not_overflow(huge):
+    """เดิม OverflowError ทะลุขึ้นไปถึงผู้ใช้เป็น error 500 เพราะไม่มีใครดัก"""
+    with pytest.raises(safe_math.UnsafeExpression):
+        safe_math.safe_eval(huge)
+
+
+@pytest.mark.parametrize("expr,expected", [
+    ("factorial(10)", 3628800),
+    ("comb(5, 2)", 10),
+    ("perm(5, 2)", 20),
+])
+def test_combinatorics_still_work_in_normal_range(expr, expected):
+    assert safe_math.safe_eval(expr) == expected

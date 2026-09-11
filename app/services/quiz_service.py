@@ -1,4 +1,5 @@
 import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -270,6 +271,22 @@ class QuizService:
     # ลิสต์กฎต่อเอกสาร ถามครั้งเดียวใช้ได้ตลอด (เอกสารเดิม = ผลเดิม)
     _RULES_CACHE: Dict[str, List[str]] = {}
     _RULES_CACHE_LIMIT = 20
+    # เอกสารยาวถูกซอยเป็นหลายชิ้นแล้วสร้างพร้อมกันหลายเธรด ถ้าไม่กั้นไว้
+    # ทุกเธรดจะเห็น cache ว่างพร้อมกันแล้วยิงถาม AI คนละครั้ง cache ก็ไม่ได้ช่วยอะไร
+    # ใช้ล็อกแยกตามเอกสาร คนที่ทำคนละเอกสารจะได้ไม่ต้องมารอกัน
+    _RULES_LOCK = threading.Lock()
+    _RULES_KEY_LOCKS: Dict[str, threading.Lock] = {}
+
+    @staticmethod
+    def _rules_key_lock(key: str) -> threading.Lock:
+        """ล็อกประจำเอกสารนี้ สร้างให้ถ้ายังไม่มี"""
+        with QuizService._RULES_LOCK:
+            lock = QuizService._RULES_KEY_LOCKS.get(key)
+            if lock is None:
+                if len(QuizService._RULES_KEY_LOCKS) >= QuizService._RULES_CACHE_LIMIT:
+                    QuizService._RULES_KEY_LOCKS.clear()
+                lock = QuizService._RULES_KEY_LOCKS[key] = threading.Lock()
+            return lock
 
     @staticmethod
     def _applicable_rules(ctx: str, mode: str) -> List[str]:
@@ -285,29 +302,32 @@ class QuizService:
 
         content = sample_across_document(ctx, settings.CTX_CHAR_LIMIT)
         key = hashlib.md5(content.encode("utf-8", errors="ignore")).hexdigest()
-        if key in QuizService._RULES_CACHE:
-            return QuizService._RULES_CACHE[key]
+        # เธรดแรกที่เข้ามาเป็นคนถาม AI ที่เหลือรอแล้วได้ของจาก cache ไปใช้
+        with QuizService._rules_key_lock(key):
+            cached = QuizService._RULES_CACHE.get(key)
+            if cached is not None:
+                return cached
 
-        try:
-            with timed("quiz: rules", "หากฎที่ประยุกต์ได้"):
-                r = client.chat.completions.create(
-                    model=settings.AI_MODEL,
-                    messages=[{"role": "user", "content": P.applicable_rules_prompt(content)}],
-                    temperature=0,
-                    response_format={"type": "json_object"},
-                )
-            data = safe_json_loads(r.choices[0].message.content, {"rules": []})
-        except Exception:
-            return []
+            try:
+                with timed("quiz: rules", "หากฎที่ประยุกต์ได้"):
+                    r = client.chat.completions.create(
+                        model=settings.AI_MODEL,
+                        messages=[{"role": "user", "content": P.applicable_rules_prompt(content)}],
+                        temperature=0,
+                        response_format={"type": "json_object"},
+                    )
+                data = safe_json_loads(r.choices[0].message.content, {"rules": []})
+            except Exception:
+                return []
 
-        rules = [str(x).strip() for x in data.get("rules", []) if str(x).strip()]
-        rules = rules[:P.MAX_APPLICABLE_RULES]
-        if len(QuizService._RULES_CACHE) >= QuizService._RULES_CACHE_LIMIT:
-            QuizService._RULES_CACHE.clear()
-        QuizService._RULES_CACHE[key] = rules
-        if rules:
-            print(f"[TIME] quiz: rules พบ {len(rules)} กฎ | {', '.join(rules[:5])}")
-        return rules
+            rules = [str(x).strip() for x in data.get("rules", []) if str(x).strip()]
+            rules = rules[:P.MAX_APPLICABLE_RULES]
+            if len(QuizService._RULES_CACHE) >= QuizService._RULES_CACHE_LIMIT:
+                QuizService._RULES_CACHE.clear()
+            QuizService._RULES_CACHE[key] = rules
+            if rules:
+                print(f"[TIME] quiz: rules พบ {len(rules)} กฎ | {', '.join(rules[:5])}")
+            return rules
 
     @staticmethod
     def _angle_of(q: Dict[str, Any]) -> Optional[str]:
@@ -573,75 +593,106 @@ class QuizService:
         if len(nums) != 1:
             return None      # ตัวเลือกมีหลายตัวเลขหรือไม่มีเลย ตัดสินไม่ได้
 
-        # ต้องเป็นโจทย์คำนวณจริง ๆ ถึงจะบังคับให้ส่งสูตรมา
-        # ดูจากว่าตัวคำถามมีตัวเลขให้คำนวณอย่างน้อย 2 ตัวหรือไม่
-        # กันวิชาภาษาที่คำตอบบังเอิญมีตัวเลขปนอยู่ แต่ไม่ได้เป็นการคำนวณ
-        looks_numeric = len(safe_math.number_strings_in_text(str(q.get("question") or ""))) >= 2
-
         expr = str(q.get("expr") or "").strip()
         if not expr:
-            # ตรวจได้แต่ไม่ส่งสูตรมา = ไม่ให้ผ่าน
-            # เดิมปล่อยผ่าน ทำให้ข้อที่ AI คิดถูกแต่กรอกเฉลยผิดหลุดออกไป
-            # (โจทย์ "45 เป็นพจน์ที่เท่าใด" คำอธิบายสรุปเอง n = 7 แต่กรอกเฉลย 8)
-            return False if looks_numeric else None
+            # ไม่มีสูตร = ตรวจไม่ได้ ไม่ใช่ตรวจแล้วผิด จึงปล่อยผ่าน
+            #
+            # เคยลองทิ้งข้อที่ไม่ส่งสูตรมาเมื่อคำถาม "ดูเหมือนมีการคำนวณ"
+            # (นับว่ามีตัวเลขตั้งแต่ 2 ตัวขึ้นไป) แต่วัดของจริงแล้วแยกไม่ออก
+            # ข้อความรู้ทั่วไปก็มีตัวเลข 2 ตัวได้ง่าย ๆ เช่น
+            # "ปี 2006 ... ดาวเคราะห์ 8 ดวง ... อยู่ลำดับที่เท่าไหร่"
+            # หรือ "เงื่อนไขแบบที่ 2 กับประธาน 3 ตัว" ของวิชาภาษา
+            # ผลคือข้อดี ๆ ถูกทิ้งเงียบ ๆ ผู้ใช้ขอ 15 ข้อแล้วได้ไม่ครบ
+            # จึงเลิกเดา เหลือแค่ตรวจตอนที่มีสูตรให้ตรวจจริง ๆ
+            return None
 
         try:
             return safe_math.matches(expr, nums[0])
         except safe_math.UnsafeExpression:
             return None
 
-    @staticmethod
-    def _answer_signature(q: Dict[str, Any], qtype: str) -> Optional[str]:
-        """ลายเซ็นของ "คำตอบที่ถูก" ใช้จับข้อซ้ำเชิงแนวคิด
-
-        คืน None เมื่อข้อนั้นมีตัวเลขให้เปลี่ยนได้ เพราะโครงเหมือนกันแต่เลขต่างกัน
-        ถือเป็นคนละข้อ (โหมดประยุกต์ตั้งใจให้เป็นแบบนั้น)
-        """
-        question = str(q.get("question") or "")
-        if "#" in question_skeleton(question):
-            return None      # มีตัวเลขให้เปลี่ยน ไม่ใช่ข้อซ้ำเชิงแนวคิด
-
-        if qtype == "mcq":
-            letters = QuizService.CHOICE_LETTERS
-            ans = str(q.get("answer", "")).strip()
-            choices = q.get("choices") or []
-            if ans not in letters or letters.index(ans) >= len(choices):
-                return None
-            text = QuizService._strip_choice_prefix(str(choices[letters.index(ans)]))
-            return " ".join(text.split()).strip().lower() or None
-
-        return str(q.get("answer", "")).strip().lower() or None
+    # คำที่โผล่ตอน AI คำนวณไม่ลงตัวแล้วมั่วคำตอบ
+    #
+    # สองคำแรกแรงที่สุด เป็นตอนที่ AI ยอมรับออกมาตรง ๆ ว่ากำลังเลือกคำตอบให้
+    # เข้ากับตัวเลือกแทนที่จะเชื่อผลคำนวณ ("จึงปรับให้ตรงกับตัวเลือกที่ถูกต้อง",
+    # "จึงต้องใช้ค่าที่สอดคล้องกับผลบวกจริงของชุดนี้") คนที่คิดออกจริงไม่เขียนแบบนี้
+    # เพราะไม่ต้องประกาศว่าคำตอบไหนถูก มันบอกผลลัพธ์ไปตรง ๆ เลย
+    #
+    # วัดกับข้อสอบจริง 37 ข้อ (ผิด 7 ถูก 30) จับได้ 6 ใน 7 โดยไม่ทิ้งข้อดีเลยสักข้อ
+    # ข้อที่เหลือเป็นแบบกาผิดช่อง ซึ่งตัวเทียบเลขข้างล่างจับได้
+    #
+    # ห้ามใส่ "ไม่ใช่" เคยลองแล้วทิ้งข้อดี 4 ข้อทันที เพราะข้อที่เฉลยเป็นเท็จ
+    # ต้องพูดคำนี้ตามปกติ ("ได้ 45 ไม่ใช่ 21 จึงเป็นเท็จ")
+    _FLAILING_WORDS = (
+        "ที่ถูกต้อง", "ที่สอดคล้อง",
+        "ไม่ตรง", "อย่างไรก็ตาม", "ไม่เป็นจำนวนเต็ม",
+    )
 
     @staticmethod
-    def _is_concept_duplicate(
-        q: Dict[str, Any],
-        collected: List[Dict[str, Any]],
-        qtype: str,
-        mode: str,
-    ) -> bool:
-        """ข้อนี้ถามซ้ำกับที่มีอยู่แล้วหรือเปล่า (เฉพาะข้อที่ไม่มีตัวเลขให้เปลี่ยน)
+    def _explain_unreliable(q: Dict[str, Any], cc: int, mode: str) -> bool:
+        """คำอธิบายส่อว่าเฉลยเชื่อไม่ได้ ใช้ตอนไม่มีสูตรให้ Python ตรวจ
 
-        เพดานโครงประโยคยอมให้โครงเดียวซ้ำได้ 2 ข้อ ซึ่งเหมาะกับโจทย์คำนวณ
-        แต่โจทย์เชิงแนวคิดไม่มีตัวเลขให้เปลี่ยน โครงเดียวกัน = คำถามเดียวกัน
-        (เจอของจริง: "เงื่อนไขที่ทำให้อนุกรมอนันต์ลู่เข้า" ออกมา 2 ข้อ เฉลยเดียวกัน)
+        จับสองอย่างที่เจอของจริงในโจทย์ลำดับและอนุกรม
 
-        เช็คคำตอบด้วย ไม่ใช่แค่คำถาม เพราะวิชาภาษามีคู่คำถามที่หน้าตาคล้ายกันมาก
-        แต่เป็นคนละข้อจริง ๆ เช่น "ข้อใดใช้ ... ถูกต้อง" กับ "... ไม่ถูกต้อง"
+        1. AI คำนวณไม่ลงตัวแล้วมั่ว — คำอธิบายวนไปมาว่า "ได้ 216 ไม่ตรง
+           ได้ 260 ไม่ตรงเช่นกัน ดังนั้นตอบ 10" คนที่คิดออกจริงไม่เขียนแบบนี้
+           ต้นเหตุคือ AI แต่งโจทย์ที่หาคำตอบเป็นจำนวนเต็มไม่ได้ตั้งแต่แรก
+
+        2. AI คิดถูกแต่กาผิดช่อง — เลขของตัวเลือกที่กาไว้ไม่โผล่ในคำอธิบายเลย
+           (คำอธิบายสรุปว่าพจน์สุดท้ายคือ 30 ตลอดทั้งย่อหน้า แต่ไปกาช่อง 28)
+
+        เฉพาะโหมดประยุกต์ โหมดเดิมอธิบายด้วยคำพูดล้วน เช่น "โลกเป็นดาวเคราะห์
+        ดวงที่สามจากดวงอาทิตย์" ไม่มีเลข 3 เขียนไว้ให้เทียบ ถ้าไม่กั้นจะทิ้งเรียบ
         """
         if P.normalize_mode(mode) != P.MODE_APPLIED:
             return False
-        signature = QuizService._answer_signature(q, qtype)
-        if not signature:
+
+        explain = str(q.get("explain") or "")
+        if not explain:
+            return False
+        if any(w in explain for w in QuizService._FLAILING_WORDS):
+            return True
+
+        # เทียบเลขได้เฉพาะตอนคำอธิบายเป็นการคำนวณจริง วิชาอื่นในโหมดประยุกต์
+        # อธิบายด้วยคำพูด ("ไมโทซิสแบ่งครั้งเดียวได้เซลล์ลูกสองเซลล์") ไม่มีเลข
+        # ให้เทียบ ถ้าไม่กั้นตรงนี้จะทิ้งข้อของวิชาชีวะ เคมี ภาษา ทิ้งเรียบ
+        if len(safe_math.number_strings_in_text(explain)) < 2:
             return False
 
-        skeleton = question_skeleton(str(q.get("question") or ""))
-        for e in collected:
-            if QuizService._answer_signature(e, qtype) != signature:
-                continue
-            other = question_skeleton(str(e.get("question") or ""))
-            if other and similar(skeleton, other) >= P.STRUCTURE_SIM_THRESHOLD:
-                return True
-        return False
+        letters = QuizService.CHOICE_LETTERS[:cc]
+        ans = str(q.get("answer", "")).strip()
+        choices = q.get("choices") or []
+        if ans not in letters or letters.index(ans) >= len(choices):
+            return False
+
+        # กาช่องที่คำอธิบายไม่เคยพูดถึงเลย
+        nums = safe_math.number_strings_in_text(
+            QuizService._strip_choice_prefix(str(choices[letters.index(ans)]))
+        )
+        if len(nums) == 1 and not safe_math.appears_in(explain, nums[0]):
+            return True
+
+        # ตัวเลือกเป็นตัวเลขล้วนทุกข้อ = โจทย์คำนวณตรง ๆ เลขตัวสุดท้ายที่คำอธิบาย
+        # สรุปไว้ ต้องเป็นหนึ่งในตัวเลือกนั้น
+        #
+        # (เคสจริง: คำอธิบายสรุปเองว่า "ผลต่างคือ 162 - 54 = 108" แต่ 108 ไม่มีอยู่
+        #  ในตัวเลือกเลยสักข้อ AI จึงไปกา 54 ซึ่งเป็นแค่เลขระหว่างทาง ตัวเทียบ
+        #  ข้างบนจับไม่ได้เพราะ 54 "มีอยู่" ในคำอธิบายจริง)
+        plain = [QuizService._strip_choice_prefix(str(c)).strip() for c in choices[:cc]]
+        if len(plain) < cc:
+            return False
+        for text in plain:
+            got = safe_math.number_strings_in_text(text)
+            if len(got) != 1 or got[0] != text:
+                return False      # มีคำประกอบ เช่น "124 ใบ" เทียบแบบนี้ไม่ได้
+
+        written = safe_math.number_strings_in_text(explain)
+        if not written:
+            return False
+        try:
+            return not any(safe_math.matches(written[-1], c) for c in plain)
+        except safe_math.UnsafeExpression:
+            return False
 
     @staticmethod
     def _strip_choice_prefix(text: str) -> str:
@@ -798,8 +849,6 @@ class QuizService:
                 text = str(q.get("question", ""))
                 if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
                     continue
-                if QuizService._is_concept_duplicate(q, collected, qtype, mode):
-                    continue
                 if QuizService._structure_full(text, collected, mode, prior):
                     continue
                 if QuizService._angle_full(
@@ -909,8 +958,6 @@ class QuizService:
                 text = str(q.get("question", ""))
                 if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
                     continue
-                if QuizService._is_concept_duplicate(q, collected, qtype, mode):
-                    continue            # ถามซ้ำของเดิมจริง ๆ ไม่เก็บสำรองด้วย
                 if not QuizService._angle_allowed(q, difficulty, mode, tries):
                     spare.append(q)     # มุมไม่เข้ากับระดับความยากที่ผู้ใช้เลือก
                     continue
@@ -1019,6 +1066,9 @@ class QuizService:
         checked, math_dropped = [], 0
         for q in questions:
             if QuizService._mcq_math_ok(q, cc) is False:
+                math_dropped += 1
+                continue
+            if QuizService._explain_unreliable(q, cc, mode):
                 math_dropped += 1
                 continue
             checked.append(q)

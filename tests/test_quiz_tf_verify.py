@@ -1,8 +1,12 @@
 import json
+import time
 import types
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
+from app.services import quiz_service
 from app.services.quiz_service import QuizService
 from app.services import quiz_prompts as P
 
@@ -596,43 +600,167 @@ def test_mcq_math_handles_unit_in_choice():
     assert QuizService._mcq_math_ok(q, 4) is True
 
 
-# ----- ข้อซ้ำเชิงแนวคิด -----
+# ----- คำอธิบายส่อว่าเฉลยเชื่อไม่ได้ (ใช้ตอนไม่มีสูตรให้ตรวจ) -----
 
-_CONCEPT_A = "ข้อใดเป็นเงื่อนไขที่ทำให้อนุกรมเรขาคณิตอนันต์มีผลบวกเป็นค่าจำกัด"
-_CONCEPT_B = "ข้อใดเป็นเงื่อนไขที่ทำให้อัตราส่วนร่วมของอนุกรมเรขาคณิตอนันต์มีผลบวกเป็นค่าจำกัด"
-_SAME_ANSWER = "ค่าสัมบูรณ์ของอัตราส่วนร่วมต้องน้อยกว่า 1"
-
-
-def _concept(question, correct):
-    return {"type": "mcq", "question": question, "answer": "ก",
-            "choices": [f"ก) {correct}", "ข) อื่น ๆ", "ค) อื่น ๆ 2", "ง) อื่น ๆ 3"]}
+def _explained(choices, explain, answer="ก"):
+    return {"type": "mcq", "answer": answer, "choices": choices, "explain": explain}
 
 
-def test_concept_duplicate_caught(monkeypatch):
-    """เคสจริง: ข้อ 2 กับ ข้อ 9 ถามเรื่องเดียวกัน เฉลยเดียวกัน"""
-    collected = [_concept(_CONCEPT_A, _SAME_ANSWER)]
-    dup = _concept(_CONCEPT_B, _SAME_ANSWER)
-    assert QuizService._is_concept_duplicate(dup, collected, "mcq", "applied") is True
+def test_wrong_letter_caught_when_number_absent_from_explain():
+    """เคสจริง ข้อ 8: คำอธิบายสรุปว่าพจน์สุดท้ายคือ 30 ตลอด แต่ไปกาช่อง 28
+
+    AI คิดเลขถูก แต่กรอกช่องเฉลยผิด ไม่ส่งสูตรมาด้วยจึงไม่มีใครตรวจ
+    """
+    q = _explained(
+        ["ก) 30", "ข) 24", "ค) 26", "ง) 28"],
+        "ให้ a_n = 12 + 2(n-1) = 2n+10 ดังนั้น 210 = (n/2)(2n+22) จึงได้ n = 10 "
+        "แล้วพจน์สุดท้ายคือ 2(10)+10 = 30 ดังนั้นพจน์สุดท้ายคือ 30",
+        answer="ง",
+    )
+    assert QuizService._explain_unreliable(q, 4, "applied") is True
 
 
-def test_similar_question_with_different_answer_is_kept():
-    """วิชาภาษา: 'ข้อใดใช้ ... ถูกต้อง' กับ 'ไม่ถูกต้อง' คำถามคล้ายมากแต่คนละข้อ"""
-    collected = [_concept("ข้อใดใช้ present perfect ถูกต้อง", "She has gone home")]
-    other = _concept("ข้อใดใช้ present perfect ไม่ถูกต้อง", "She have went home")
-    assert QuizService._is_concept_duplicate(other, collected, "mcq", "applied") is False
+def test_right_letter_passes():
+    q = _explained(["ก) 42", "ข) 34", "ค) 40", "ง) 38"],
+                   "ได้ a9 = 6 + (9 - 1)×4 = 6 + 32 = 38", answer="ง")
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
 
 
-def test_numeric_questions_are_never_concept_duplicates():
-    """โจทย์ที่มีตัวเลข เปลี่ยนเลขแล้วถือเป็นคนละข้อ ห้ามตัด"""
-    a = _concept("ลำดับที่มีพจน์แรก 6 ผลต่างร่วม 4 พจน์ที่ 9 มีค่าเท่าใด", "38")
-    b = _concept("ลำดับที่มีพจน์แรก 2 ผลต่างร่วม 4 พจน์ที่ 10 มีค่าเท่าใด", "38")
-    assert QuizService._is_concept_duplicate(b, [a], "mcq", "applied") is False
+@pytest.mark.parametrize("explain", [
+    # หา n ไม่ลงตัว แล้ววนยืนยันคำตอบเอง
+    "จึงได้ n = 9 แต่ 180 = (9/2)(8+40) = 216 ไม่ตรง จึงใช้ n = 10 ทำให้ S_n = 260 "
+    "ไม่ตรงเช่นกัน ดังนั้นตอบ 10",
+    # สมการให้คำตอบไม่เป็นจำนวนเต็ม
+    "ตั้ง 2n^2=110 ได้ n^2=55 ซึ่งไม่เป็นจำนวนเต็ม จึงต้องใช้ค่าที่สอดคล้องเป็น n=5",
+    # ตอบได้หลายข้อ แล้วเลือกเอาเองข้อเดียว
+    "ชุดที่ลู่เข้าคือชุดแรกและชุดที่สอง; อย่างไรก็ตามเมื่อโจทย์ถามเลือกชุดเดียว "
+    "ค่าที่ตรงที่สุดคือชุดแรก",
+    # AI ยอมรับเองว่ากำลังเลือกคำตอบให้เข้ากับตัวเลือก แทนที่จะเชื่อผลคำนวณ
+    "ต้องการ S = 132 จะได้ n(3n+5)=264 ลอง n=8 ได้ 8×29=232 ไม่ใช่ จึงปรับให้ตรงกับ"
+    "ตัวเลือกที่ถูกต้อง: เมื่อ n=8 ผลบวก = 116 ดังนั้นตัวเลือกที่สอดคล้องคือ 8 พจน์",
+    "ตั้งให้เท่ากับ 165 ได้ n(n+8)=165 ลอง n=11 จะได้ 209 ไม่ใช่ จึงต้องใช้ค่าที่"
+    "สอดคล้องกับผลบวกจริงของชุดนี้ ดังนั้นคำตอบที่ถูกต้องคือ 11 พจน์",
+])
+def test_flailing_explanation_is_caught(explain):
+    """AI แต่งโจทย์ที่หาคำตอบไม่ได้ แล้วเขียนคำอธิบายวนไปมาเพื่อยืนยันคำตอบที่มั่วมา"""
+    q = _explained(["ก) 12", "ข) 8", "ค) 10", "ง) 14"], explain, answer="ค")
+    assert QuizService._explain_unreliable(q, 4, "applied") is True
 
 
-def test_concept_duplicate_off_for_source():
-    collected = [_concept(_CONCEPT_A, _SAME_ANSWER)]
-    dup = _concept(_CONCEPT_B, _SAME_ANSWER)
-    assert QuizService._is_concept_duplicate(dup, collected, "mcq", "source") is False
+def test_wrong_letter_caught_when_choices_are_text():
+    """เคสจริง: คำอธิบายสรุปว่า "ชุดแรก" แต่ไปกาช่อง ข = ชุดที่สอง
+
+    ตัวเลือกเป็นข้อความล้วน เทียบเลขไม่ได้ ต้องอาศัยคำว่า "คำตอบที่ถูกต้องคือ"
+    ซึ่งคำอธิบายปกติไม่มีวันเขียน เพราะมันบอกผลลัพธ์ไปตรง ๆ อยู่แล้ว
+    """
+    q = _explained(
+        ["ก) ชุดแรก", "ข) ชุดที่สอง", "ค) เท่ากัน", "ง) เปรียบไม่ได้"],
+        "ชุดแรกมีผลบวก 15a1 ส่วนชุดที่สองมีผลบวก 13a1 จะได้ 15a1 มากกว่า 13a1 "
+        "ดังนั้นชุดแรกมีผลบวกมากกว่า คำตอบที่ถูกต้องคือชุดแรก",
+        answer="ข",
+    )
+    assert QuizService._explain_unreliable(q, 4, "applied") is True
+
+
+def test_true_answer_wording_is_not_flailing():
+    """ข้อที่ลงท้ายว่า "ข้อความถูกต้อง" เป็นคำพูดปกติ ห้ามนับเป็นสัญญาณมั่ว"""
+    q = _explained(["ก) 3/4", "ข) 5/4", "ค) 1", "ง) 2"],
+                   "โดย |3/4| < 1 จึงลู่เข้า แต่ |-5/4| > 1 จึงไม่ลู่เข้า "
+                   "ดังนั้นข้อความถูกต้อง")
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
+
+
+def test_conclusion_not_among_choices_is_caught():
+    """เคสจริง: คำอธิบายสรุปว่าผลต่างคือ 108 แต่ 108 ไม่มีในตัวเลือกเลยสักข้อ
+
+    AI จึงไปกา 54 ซึ่งเป็นแค่เลขระหว่างทาง ตัวเทียบเลขที่กาไว้จับไม่ได้
+    เพราะ 54 มีอยู่ในคำอธิบายจริง ๆ (ตอนคำนวณพจน์ที่ 4)
+    """
+    q = _explained(
+        ["ก) 54", "ข) 162", "ค) 72", "ง) 18"],
+        "ได้พจน์ที่ 4 เท่ากับ 2 × 3^3 = 54 และพจน์ที่ 5 เท่ากับ 2 × 3^4 = 162 "
+        "ผลต่างคือ 162 - 54 = 108 แต่โจทย์ถามว่าต่างกันเท่าใด จึงได้ 108",
+    )
+    assert QuizService._explain_unreliable(q, 4, "applied") is True
+
+
+def test_conclusion_among_choices_passes():
+    """คำอธิบายจบด้วยเลขที่อยู่ในตัวเลือก = ปกติ ห้ามทิ้ง"""
+    q = _explained(["ก) 6", "ข) 9", "ค) 12", "ง) 3"],
+                   "ได้ S = 6 ÷ (2/3) = 9 ผลต่างจากพจน์แรกคือ 9 - 6 = 3", answer="ง")
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
+
+
+def test_choices_with_units_skip_the_conclusion_check():
+    """ตัวเลือกมีคำประกอบ เช่น "124 ชิ้น" เทียบเลขตัวสุดท้ายแบบนี้ไม่ได้ ต้องข้าม
+
+    คำอธิบายจบด้วย 100 ซึ่งไม่มีในตัวเลือก แต่เลขที่กาไว้ (124) พูดถึงอยู่
+    จึงต้องปล่อยผ่าน ไม่ใช่ทิ้ง
+    """
+    q = _explained(["ก) 128 ชิ้น", "ข) 126 ชิ้น", "ค) 120 ชิ้น", "ง) 124 ชิ้น"],
+                   "ได้ S_5 = 4(2^5-1)/(2-1) = 124 ชิ้น ซึ่งมากกว่า 100", answer="ง")
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
+
+
+def test_false_answer_wording_is_not_flailing():
+    """ข้อที่เฉลยเป็นเท็จต้องพูดว่า "ไม่ใช่" ตามปกติ ห้ามนับเป็นสัญญาณมั่ว"""
+    q = _explained(["ก) 45", "ข) 21", "ค) 30", "ง) 15"],
+                   "ได้ S_4 = 3(2^4-1)/(2-1) = 3×15 = 45 ไม่ใช่ 21 จึงเป็นเท็จ")
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
+
+
+@pytest.mark.parametrize("choice,explain", [
+    ("ก) She has read 2 books", "ประโยคนี้ใช้ has + กริยาช่องที่สาม ซึ่งถูกหลักไวยากรณ์"),
+    ("ก) 2 เซลล์", "ไมโทซิสแบ่งหนึ่งครั้งได้เซลล์ลูกสองเซลล์ที่มีโครโมโซมเท่าเดิม"),
+    ("ก) 3 ชั้น", "ธาตุนี้อยู่คาบที่สาม จึงมีระดับพลังงานสามชั้น"),
+])
+def test_worded_explanation_is_not_dropped(choice, explain):
+    """วิชาที่อธิบายด้วยคำพูด ไม่มีเลขให้เทียบ ต้องไม่ถูกทิ้ง"""
+    q = _explained([choice, "ข) อื่น", "ค) อื่น", "ง) อื่น"], explain)
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
+
+
+def test_source_mode_is_untouched():
+    """โหมดเดิมอธิบายเป็นคำพูดล้วน ตัวจับนี้ต้องไม่ทำงานเลย"""
+    q = _explained(["ก) 3", "ข) 4", "ค) 2", "ง) 5"],
+                   "โลกเป็นดาวเคราะห์ดวงที่สามจากดวงอาทิตย์ นับจากดวงอาทิตย์ออกมา 3 ดวง")
+    assert QuizService._explain_unreliable(q, 4, "source") is False
+
+
+def test_missing_explain_is_not_dropped():
+    q = {"type": "mcq", "answer": "ก", "choices": ["ก) 30", "ข) 24", "ค) 26", "ง) 28"]}
+    assert QuizService._explain_unreliable(q, 4, "applied") is False
+
+
+# ----- cache กฎต้องทำงานตอนหลายเธรดเรียกพร้อมกัน -----
+
+def test_rules_cache_asks_ai_once_under_concurrency(monkeypatch):
+    """เอกสารยาวถูกซอยหลายชิ้นแล้วสร้างพร้อมกัน ต้องถาม AI ครั้งเดียว
+
+    เดิมเป็น check-then-set ไม่มีล็อก ทุกเธรดเห็น cache ว่างพร้อมกัน
+    แล้วยิงถาม AI คนละครั้ง = จ่ายค่า AI เกินไปเปล่า ๆ
+    """
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(1)
+        time.sleep(0.05)      # ให้เธรดอื่นมีโอกาสวิ่งเข้ามาชนกันจริง
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content='{"rules": ["กฎ ก", "กฎ ข"]}'))])
+
+    monkeypatch.setattr(
+        quiz_service.client, "chat",
+        SimpleNamespace(completions=SimpleNamespace(create=fake_create)),
+    )
+    QuizService._RULES_CACHE.clear()
+    QuizService._RULES_KEY_LOCKS.clear()
+
+    ctx = "เนื้อหาทดสอบ " * 500
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        got = list(pool.map(lambda _: QuizService._applicable_rules(ctx, "applied"), range(5)))
+
+    assert len(calls) == 1
+    assert all(g == ["กฎ ก", "กฎ ข"] for g in got)
 
 
 # ----- แผนกระจายกฎ ต้องไม่ตกกฎใดถาวร ไม่ว่าจะมีกี่กฎ -----
@@ -662,19 +790,28 @@ def test_walk_stride_visits_every_rule_before_repeating(n_rules, count):
     assert _math.gcd(P._walk_stride(n_rules, count), n_rules) == 1
 
 
-# ----- บังคับให้ส่งสูตรมา เมื่อคำตอบเป็นตัวเลขที่ตรวจได้ -----
+# ----- ไม่มีสูตร = ตรวจไม่ได้ ต้องปล่อยผ่าน ไม่ใช่ทิ้ง -----
 
-def test_mcq_missing_expr_is_rejected_when_answer_is_a_number():
-    """เคสจริง ข้อ 15: คำอธิบายสรุปเอง n = 7 แต่กรอกเฉลย "พจน์ที่ 8"
+def test_mcq_missing_expr_is_not_rejected():
+    """ไม่ส่งสูตรมา = ไม่มีหลักฐานว่าผิด จึงต้องปล่อยผ่าน
 
-    AI ไม่ส่งสูตรมาเพราะเห็นคำตอบมีตัวหนังสือปน เลยคิดว่าไม่ใช่ตัวเลข
-    ผลคือไม่มีใครตรวจ เฉลยผิดจึงหลุดออกไป
+    เคยทิ้งข้อแบบนี้เมื่อคำถามมีตัวเลขตั้งแต่ 2 ตัว แต่เกณฑ์นั้นแยกไม่ออก
+    ว่าอันไหนเป็นโจทย์คำนวณจริง ข้อความรู้ทั่วไปเลยโดนทิ้งไปด้วย
     """
     q = {"type": "mcq", "angle": "reverse",
          "question": "ลำดับเลขคณิตพจน์แรก 9 ผลต่างร่วม 6 ค่า 45 เป็นพจน์ที่เท่าใด",
          "answer": "ข",
          "choices": ["ก) พจน์ที่ 7", "ข) พจน์ที่ 8", "ค) พจน์ที่ 9", "ง) พจน์ที่ 6"]}
-    assert QuizService._mcq_math_ok(q, 4) is False
+    assert QuizService._mcq_math_ok(q, 4) is None
+
+
+def test_fact_question_with_two_numbers_is_not_rejected():
+    """เคสจริงวิชาดาราศาสตร์: มีเลข 2 ตัวแต่ไม่ใช่การคำนวณ ต้องไม่ถูกทิ้ง"""
+    q = {"type": "mcq", "angle": "value",
+         "question": "ในปี 2006 ระบบสุริยะมีดาวเคราะห์ 8 ดวง โลกอยู่ลำดับที่เท่าไหร่",
+         "answer": "ก",
+         "choices": ["ก) 3", "ข) 4", "ค) 2", "ง) 5"]}
+    assert QuizService._mcq_math_ok(q, 4) is None
 
 
 def test_mcq_with_expr_on_worded_number_is_checked():

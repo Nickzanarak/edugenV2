@@ -55,6 +55,9 @@ _CONSTS = {"pi": math.pi, "e": math.e, "tau": math.tau}
 _MAX_POW_EXP = 128       # กันนิพจน์ระเบิด เช่น 9**9**9
 _MAX_POW_BASE = 1e12
 _MAX_LEN = 200
+# factorial(170) เป็นค่ามากสุดที่ float เก็บได้ เกินกว่านั้นคำนวณไปก็ใช้ไม่ได้
+_COMBINATORIC = ("factorial", "comb", "perm")
+_MAX_FACTORIAL = 170
 
 
 def _eval(node):
@@ -86,7 +89,13 @@ def _eval(node):
             raise UnsafeExpression("เรียกฟังก์ชันไม่อนุญาต")
         if node.keywords:
             raise UnsafeExpression("keyword argument ไม่รองรับ")
-        return _FUNCS[node.func.id](*[_eval(a) for a in node.args])
+        name = node.func.id
+        args = [_eval(a) for a in node.args]
+        # ฟังก์ชันกลุ่มแฟกทอเรียลโตเร็วมาก ถ้าไม่จำกัดค่า จะเผา CPU
+        # ไปเปล่า ๆ ก่อนที่จะพังตอนแปลงเป็น float อยู่ดี
+        if name in _COMBINATORIC and any(abs(a) > _MAX_FACTORIAL for a in args):
+            raise UnsafeExpression(f"ค่าที่ส่งให้ {name} ใหญ่เกินไป")
+        return _FUNCS[name](*args)
 
     if isinstance(node, ast.Name):
         if node.id in _CONSTS:
@@ -124,8 +133,11 @@ def safe_eval(expr: str) -> float:
         raise UnsafeExpression("ผลลัพธ์ไม่ใช่ตัวเลขเดี่ยว")
     try:
         value = float(result)
-    except (TypeError, ValueError) as e:
-        raise UnsafeExpression(f"ผลลัพธ์ไม่ใช่ตัวเลข: {result!r}") from e
+    except (TypeError, ValueError, OverflowError) as e:
+        # OverflowError เกิดเมื่อผลลัพธ์เป็นจำนวนเต็มที่ใหญ่เกินกว่า float จะเก็บได้
+        # เช่น factorial(171) ถ้าไม่ดักไว้ตรงนี้ มันจะทะลุขึ้นไปถึงผู้ใช้เป็น error 500
+        # เพราะตัวเรียกทุกตัวดักแค่ UnsafeExpression
+        raise UnsafeExpression(f"ผลลัพธ์ไม่ใช่ตัวเลขที่ใช้ได้: {type(e).__name__}") from e
     if math.isnan(value) or math.isinf(value):
         raise UnsafeExpression("ผลลัพธ์เป็น nan/inf")
     return value
