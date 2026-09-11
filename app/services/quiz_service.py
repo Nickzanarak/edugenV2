@@ -582,14 +582,11 @@ class QuizService:
         if QuizService._angle_of(q) in P.TF_ANGLES_WITHOUT_EXPR:
             return None
 
-        letters = QuizService.CHOICE_LETTERS[:cc]
-        ans = str(q.get("answer", "")).strip()
-        choices = q.get("choices") or []
-        if ans not in letters or letters.index(ans) >= len(choices):
+        picked = QuizService._picked_choice(q, cc)
+        if picked is None:
             return None
 
-        text = QuizService._strip_choice_prefix(str(choices[letters.index(ans)]))
-        nums = safe_math.number_strings_in_text(text)
+        nums = safe_math.number_strings_in_text(picked)
         if len(nums) != 1:
             return None      # ตัวเลือกมีหลายตัวเลขหรือไม่มีเลย ตัดสินไม่ได้
 
@@ -659,16 +656,12 @@ class QuizService:
         if len(safe_math.number_strings_in_text(explain)) < 2:
             return False
 
-        letters = QuizService.CHOICE_LETTERS[:cc]
-        ans = str(q.get("answer", "")).strip()
-        choices = q.get("choices") or []
-        if ans not in letters or letters.index(ans) >= len(choices):
+        picked = QuizService._picked_choice(q, cc)
+        if picked is None:
             return False
 
         # กาช่องที่คำอธิบายไม่เคยพูดถึงเลย
-        nums = safe_math.number_strings_in_text(
-            QuizService._strip_choice_prefix(str(choices[letters.index(ans)]))
-        )
+        nums = safe_math.number_strings_in_text(picked)
         if len(nums) == 1 and not safe_math.appears_in(explain, nums[0]):
             return True
 
@@ -678,6 +671,7 @@ class QuizService:
         # (เคสจริง: คำอธิบายสรุปเองว่า "ผลต่างคือ 162 - 54 = 108" แต่ 108 ไม่มีอยู่
         #  ในตัวเลือกเลยสักข้อ AI จึงไปกา 54 ซึ่งเป็นแค่เลขระหว่างทาง ตัวเทียบ
         #  ข้างบนจับไม่ได้เพราะ 54 "มีอยู่" ในคำอธิบายจริง)
+        choices = q.get("choices") or []
         plain = [QuizService._strip_choice_prefix(str(c)).strip() for c in choices[:cc]]
         if len(plain) < cc:
             return False
@@ -693,6 +687,20 @@ class QuizService:
             return not any(safe_math.matches(written[-1], c) for c in plain)
         except safe_math.UnsafeExpression:
             return False
+
+    @staticmethod
+    def _picked_choice(q: Dict[str, Any], cc: int) -> Optional[str]:
+        """ข้อความของตัวเลือกที่ AI กาไว้ (ตัดหัว "ก) " ออกแล้ว)
+
+        คืน None เมื่อกาตัวอักษรที่ไม่มีอยู่ หรือชี้ไปยังตัวเลือกที่ไม่มีจริง
+        ผู้เรียกตัดสินเองว่ากรณีนั้นจะถือว่า "ตรวจไม่ได้" หรือ "ไม่น่าสงสัย"
+        """
+        letters = QuizService.CHOICE_LETTERS[:cc]
+        ans = str(q.get("answer", "")).strip()
+        choices = q.get("choices") or []
+        if ans not in letters or letters.index(ans) >= len(choices):
+            return None
+        return QuizService._strip_choice_prefix(str(choices[letters.index(ans)]))
 
     @staticmethod
     def _strip_choice_prefix(text: str) -> str:

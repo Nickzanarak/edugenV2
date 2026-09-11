@@ -25,7 +25,7 @@ class HistoryService:
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "qa_history": [q.model_dump() if hasattr(q, 'model_dump') else q.dict() for q in body.qa_history],
             }
-            update_time, ref = db.collection("users").document(uid).collection("histories").add(data)
+            _, ref = db.collection("users").document(uid).collection("histories").add(data)
             return {"ok": True, "message": "History saved", "id": ref.id}
         except Exception as e:
             raise HTTPException(500, f"Save history failed: {e}")
