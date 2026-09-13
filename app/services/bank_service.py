@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from app.core.config import settings
 from app.db.firebase import get_firestore_db
-from app.utils.nlp import similar
+from app.utils.nlp import same_question
 from app.models.bank import QuestionIn, QuizCreateIn
 
 
@@ -209,7 +209,7 @@ class BankService:
         if not new_text:
             return False
         for existing in BankService._question_texts_in_set(quiz, questions):
-            if similar(new_text, existing) >= settings.NEAR_DUP_THRESHOLD:
+            if same_question(new_text, existing, settings.NEAR_DUP_THRESHOLD):
                 return True
         return False
 
