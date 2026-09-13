@@ -1,4 +1,5 @@
 import hashlib
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
@@ -624,6 +625,9 @@ class QuizService:
         "ที่ถูกต้อง", "ที่สอดคล้อง",
         "ไม่ตรง", "อย่างไรก็ตาม", "ไม่เป็นจำนวนเต็ม",
     )
+    # "= 38" หรือ "2 × 3" = คำอธิบายนี้มีการคำนวณ (วัดกับไวยากรณ์ 12 ข้อ ไม่โดนเลย
+    # คณิตที่ผิด 8 ข้อ โดนครบ) ไม่ใส่เครื่องหมายลบ เพราะ "ข้อ 1-3" เป็นช่วง ไม่ใช่ลบ
+    _LOOKS_LIKE_CALC = re.compile(r"=\s*-?\d|\d\s*[×x*^÷/+]\s*-?\d")
 
     @staticmethod
     def _explain_unreliable(q: Dict[str, Any], cc: int, mode: str) -> bool:
@@ -647,14 +651,19 @@ class QuizService:
         explain = str(q.get("explain") or "")
         if not explain:
             return False
+
+        # ตัวดักทุกชั้นข้างล่างใช้ได้เฉพาะคำอธิบายที่ "มีการคำนวณ" จริง ๆ
+        # วิชาอื่นพูดคำว่า "ประโยคที่ถูกต้องคือ" ตามปกติโดยไม่ได้มั่วอะไร
+        #
+        # เคยกันด้วย "ต้องมีตัวเลขอย่างน้อย 2 ตัว" แล้วพังกับวิชาภาษา เพราะไวยากรณ์
+        # เต็มไปด้วยเลขที่เป็น "ชื่อ" ไม่ใช่ "จำนวน": แบบที่ 2, กริยาช่องที่ 3, V1
+        # เทสของจริงกับ PDF ไวยากรณ์ โดนทิ้ง 13 ข้อใน 3 รอบ แล้วระบบต้องขอใหม่
+        # จนโจทย์ออกมาซ้ำ ๆ กัน จึงเปลี่ยนมาดูว่ามี "เลข = เลข" หรือ "เลข × เลข" ไหม
+        # ซึ่งคำอธิบายคณิตมีเสมอ ส่วนวิชาอื่นไม่มี
+        if not QuizService._LOOKS_LIKE_CALC.search(explain):
+            return False
         if any(w in explain for w in QuizService._FLAILING_WORDS):
             return True
-
-        # เทียบเลขได้เฉพาะตอนคำอธิบายเป็นการคำนวณจริง วิชาอื่นในโหมดประยุกต์
-        # อธิบายด้วยคำพูด ("ไมโทซิสแบ่งครั้งเดียวได้เซลล์ลูกสองเซลล์") ไม่มีเลข
-        # ให้เทียบ ถ้าไม่กั้นตรงนี้จะทิ้งข้อของวิชาชีวะ เคมี ภาษา ทิ้งเรียบ
-        if len(safe_math.number_strings_in_text(explain)) < 2:
-            return False
 
         picked = QuizService._picked_choice(q, cc)
         if picked is None:
