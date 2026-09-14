@@ -14,7 +14,7 @@ from app.utils.chunking import build_chunks_semantic as build_chunks
 from app.utils.timing import timed
 from app.utils.text import safe_json_loads
 from app.utils import safe_math
-from app.services import quiz_prompts as P
+from app.services import prompts as P
 
 
 class QuizService:
@@ -330,11 +330,49 @@ class QuizService:
                 print(f"[TIME] quiz: rules พบ {len(rules)} กฎ | {', '.join(rules[:5])}")
             return rules
 
+    # ป้ายชนิดเนื้อหาต่อเอกสาร ถามครั้งเดียวก่อนซอยเป็นชิ้น (เอกสารเดิม = ป้ายเดิม)
+    _KIND_CACHE: Dict[str, str] = {}
+
+    @staticmethod
+    def _detect_kind(context: str, mode: str) -> str:
+        """ถาม AI ว่าเนื้อหาทั้งเล่มเป็นแบบไหน: math / language / general (เฉพาะโหมดประยุกต์)
+
+        ถามที่ระดับ "ทั้งเอกสาร" ไม่ใช่ทีละชิ้น เพราะเอกสารยาวถูกซอยหลายชิ้น
+        ถ้าถามทีละชิ้นจะได้หลายป้ายที่อาจไม่ตรงกัน (ชิ้นที่มีแต่แบบฝึกหัดอาจถูกมองต่าง
+        จากชิ้นที่มีตารางกฎ) ข้อสอบชุดเดียวกันจะได้คู่มือปนกัน
+
+        ถ้าถามไม่สำเร็จด้วยเหตุใดก็ตาม ถือเป็นคณิต = ทำงานเหมือนเดิมทุกประการ
+        """
+        if P.normalize_mode(mode) != P.MODE_APPLIED:
+            return P.KIND_DEFAULT
+        content = sample_across_document(context, settings.CTX_CHAR_LIMIT)
+        key = hashlib.md5(content.encode("utf-8", errors="ignore")).hexdigest()
+        cached = QuizService._KIND_CACHE.get(key)
+        if cached:
+            return cached
+        try:
+            with timed("quiz: kind", "ดูว่าเนื้อหาเป็นแบบไหน"):
+                r = client.chat.completions.create(
+                    model=settings.AI_MODEL,
+                    messages=[{"role": "user", "content": P.content_kind_prompt(content)}],
+                    temperature=0,
+                    response_format={"type": "json_object"},
+                )
+            data = safe_json_loads(r.choices[0].message.content, {})
+        except Exception:
+            return P.KIND_DEFAULT
+        kind = P.normalize_kind(data.get("kind"))
+        if len(QuizService._KIND_CACHE) >= QuizService._RULES_CACHE_LIMIT:
+            QuizService._KIND_CACHE.clear()
+        QuizService._KIND_CACHE[key] = kind
+        print(f"[TIME] quiz: kind = {kind} ({P.book_for(kind).NAME})")
+        return kind
+
     @staticmethod
     def _angle_of(q: Dict[str, Any]) -> Optional[str]:
-        """มุมของโจทย์ข้อนี้ (value/reverse/situation/compare/property) หรือ None ถ้าไม่ระบุ"""
+        """มุมของโจทย์ข้อนี้ หรือ None ถ้าไม่ระบุ (รหัสมุมของทุกชนิดเนื้อหาไม่ซ้ำกัน)"""
         angle = str(q.get("angle") or "").strip().lower()
-        return angle if angle in P.TF_ANGLES else None
+        return angle if angle in P.ALL_ANGLES else None
 
     @staticmethod
     def _angle_allowed(
@@ -342,6 +380,7 @@ class QuizService:
         difficulty: Optional[str],
         mode: str,
         tries: int = 0,
+        kind: str = P.KIND_DEFAULT,
     ) -> bool:
         """มุมของข้อนี้ เข้ากับระดับความยากที่ผู้ใช้เลือกไหม
 
@@ -357,7 +396,7 @@ class QuizService:
         angle = QuizService._angle_of(q)
         if not angle:
             return True      # ไม่ได้แจ้งมุมมา ไม่มีข้อมูลพอจะตัดสิน ปล่อยผ่าน
-        return angle in P.angles_for(difficulty, tries)
+        return angle in P.angles_for(difficulty, tries, kind)
 
     @staticmethod
     def _angle_full(
@@ -391,7 +430,7 @@ class QuizService:
             angle = QuizService._angle_of(e)
             if angle:
                 counts[angle] = counts.get(angle, 0) + 1
-        return [a for a in P.TF_ANGLES if counts.get(a, 0) >= cap]
+        return [a for a in P.ALL_ANGLES if counts.get(a, 0) >= cap]
 
     # ฟิลด์ที่ใช้ช่วยตรวจ/คุมความหลากหลายเท่านั้น ไม่ต้องส่งออกไปกับข้อสอบ
     _INTERNAL_FIELDS = ("expr", "stated", "angle", "rule", "_math_ok")
@@ -518,6 +557,7 @@ class QuizService:
         avoid_angles: Optional[List[str]],
         rule_plan: Optional[List[Tuple[str, int]]],
         tries: int,
+        kind: str = P.KIND_DEFAULT,
     ) -> str:
         """คำสั่งเสริมของโหมดประยุกต์ที่ต่อท้าย prompt — ปรนัยกับถูก/ผิดใช้ชุดเดียวกัน
 
@@ -526,9 +566,9 @@ class QuizService:
         โหมดเดิมได้ค่าว่างทุกบล็อก prompt จึงไม่เปลี่ยนแม้แต่ตัวอักษรเดียว
         """
         return (
-            P.angle_guide_block(difficulty, mode, qtype, tries)
+            P.angle_guide_block(difficulty, mode, qtype, tries, kind)
             + P.tf_avoid_structure_block(avoid, mode)
-            + P.tf_avoid_angle_block(avoid_angles, mode)
+            + P.tf_avoid_angle_block(avoid_angles, mode, kind)
             + P.rule_quota_block(
                 P.plan_rule_quota([r for r, _ in (rule_plan or [])], n), mode, difficulty
             )
@@ -569,7 +609,7 @@ class QuizService:
         return True
 
     @staticmethod
-    def _mcq_math_ok(q: Dict[str, Any], cc: int) -> Optional[bool]:
+    def _mcq_math_ok(q: Dict[str, Any], cc: int, kind: Optional[str] = None) -> Optional[bool]:
         """ตัวเลือกที่เฉลยไว้ ตรงกับผลคำนวณของ Python ไหม
 
         คืน None เมื่อตรวจไม่ได้ (ไม่ใช่ข้อคำนวณ / ตัวเลือกไม่ใช่ตัวเลขเดี่ยว)
@@ -580,7 +620,7 @@ class QuizService:
          แถมคำตอบจริง 216 ไม่มีอยู่ในตัวเลือกเลยสักข้อ)
         """
         # มุมที่คำตอบไม่ใช่ตัวเลขเดี่ยว (เช่น "ชุดที่ 3") ตรวจแบบนี้ไม่ได้
-        if QuizService._angle_of(q) in P.TF_ANGLES_WITHOUT_EXPR:
+        if QuizService._angle_of(q) in P.angles_without_expr(P.normalize_kind(kind)):
             return None
 
         picked = QuizService._picked_choice(q, cc)
@@ -630,7 +670,7 @@ class QuizService:
     _LOOKS_LIKE_CALC = re.compile(r"=\s*-?\d|\d\s*[×x*^÷/+]\s*-?\d")
 
     @staticmethod
-    def _explain_unreliable(q: Dict[str, Any], cc: int, mode: str) -> bool:
+    def _explain_unreliable(q: Dict[str, Any], cc: int, mode: str, kind: str = P.KIND_DEFAULT) -> bool:
         """คำอธิบายส่อว่าเฉลยเชื่อไม่ได้ ใช้ตอนไม่มีสูตรให้ Python ตรวจ
 
         จับสองอย่างที่เจอของจริงในโจทย์ลำดับและอนุกรม
@@ -647,19 +687,19 @@ class QuizService:
         """
         if P.normalize_mode(mode) != P.MODE_APPLIED:
             return False
+        # ตัวดักชุดนี้อ่าน "ร่องรอยการมั่วเลข" จึงใช้ได้กับเนื้อหาคณิตเท่านั้น
+        # วิชาภาษาพูดคำว่า "ประโยคที่ถูกต้องคือ" ตามปกติโดยไม่ได้มั่วอะไร
+        # เดิมเคยเดาจากคำอธิบายว่าเป็นคณิตไหม (นับเลข -> ดูเครื่องหมาย =) เดาผิดกับ
+        # วิชาใหม่ทุกครั้ง ตอนนี้อ่านป้ายที่ตัวหากฎติดมาให้แทน ไม่ต้องเดา
+        if P.normalize_kind(kind) != P.KIND_MATH:
+            return False
 
         explain = str(q.get("explain") or "")
         if not explain:
             return False
 
-        # ตัวดักทุกชั้นข้างล่างใช้ได้เฉพาะคำอธิบายที่ "มีการคำนวณ" จริง ๆ
-        # วิชาอื่นพูดคำว่า "ประโยคที่ถูกต้องคือ" ตามปกติโดยไม่ได้มั่วอะไร
-        #
-        # เคยกันด้วย "ต้องมีตัวเลขอย่างน้อย 2 ตัว" แล้วพังกับวิชาภาษา เพราะไวยากรณ์
-        # เต็มไปด้วยเลขที่เป็น "ชื่อ" ไม่ใช่ "จำนวน": แบบที่ 2, กริยาช่องที่ 3, V1
-        # เทสของจริงกับ PDF ไวยากรณ์ โดนทิ้ง 13 ข้อใน 3 รอบ แล้วระบบต้องขอใหม่
-        # จนโจทย์ออกมาซ้ำ ๆ กัน จึงเปลี่ยนมาดูว่ามี "เลข = เลข" หรือ "เลข × เลข" ไหม
-        # ซึ่งคำอธิบายคณิตมีเสมอ ส่วนวิชาอื่นไม่มี
+        # ในเอกสารคณิตเองก็มีข้อแนวคิดที่ไม่คำนวณ (ลู่เข้า/ไม่ลู่เข้า) คำอธิบายพวกนั้น
+        # ไม่มี "เลข = เลข" ให้ตรวจ ตัวดักคำจึงต้องข้ามไป ไม่งั้นจะทิ้งข้อดี
         if not QuizService._LOOKS_LIKE_CALC.search(explain):
             return False
         if any(w in explain for w in QuizService._FLAILING_WORDS):
@@ -799,6 +839,7 @@ class QuizService:
         if not ctx:
             raise HTTPException(400, "context ว่าง")
         count = max(1, min(15, int(n or 5)))
+        kind = QuizService._detect_kind(ctx, mode)     # ถามครั้งเดียวทั้งเล่ม ทุกชิ้นใช้ป้ายเดียวกัน
 
         chunks = build_chunks(ctx)
         exclude_list = QuizService._normalize_exclude(exclude)
@@ -807,7 +848,7 @@ class QuizService:
         # เอกสารสั้น -> ทางเดิม
         if len(chunks) <= 1:
             collected = QuizService._generate_from_text(
-                qtype, ctx, count, exclude, topics, difficulty, choices_count, mode=mode
+                qtype, ctx, count, exclude, topics, difficulty, choices_count, mode=mode, kind=kind
             )
             return QuizService._strip_internal(QuizService._rebalance_tf(
                 collected, qtype, ctx, exclude_list, difficulty, mode, dup_threshold
@@ -849,6 +890,7 @@ class QuizService:
                     choices_count,
                     max_tries=3,   # ต่อก้อนไม่ต้องพยายามหนักเท่ากรณีก้อนเดียว
                     mode=mode,
+                    kind=kind,
                 )
             except Exception:
                 return []   # ก้อนเดียวพัง ไม่ให้ล้มทั้งคำขอ
@@ -882,7 +924,7 @@ class QuizService:
             try:
                 extra = QuizService._generate_from_text(
                     qtype, chunks[richest], need, excludes_now, None,
-                    difficulty, choices_count, max_tries=3, mode=mode,
+                    difficulty, choices_count, max_tries=3, mode=mode, kind=kind,
                 )
                 for q in extra:
                     if len(collected) >= count:
@@ -914,8 +956,12 @@ class QuizService:
         choices_count: Optional[int] = 4,
         max_tries: int = 6,
         mode: Optional[str] = P.MODE_SOURCE,
+        kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """ออกข้อสอบจากข้อความก้อนเดียว (ตรรกะเดิม) — ใช้ทั้งกรณีเอกสารสั้นและแต่ละก้อนของเอกสารยาว"""
+        """ออกข้อสอบจากข้อความก้อนเดียว (ตรรกะเดิม) — ใช้ทั้งกรณีเอกสารสั้นและแต่ละก้อนของเอกสารยาว
+
+        kind = ป้ายชนิดเนื้อหาที่ _generate_batch ถามมาให้ (ถ้าไม่มีถือเป็นคณิต)
+        """
         ctx = (context or "").strip()
         count = max(1, min(15, int(n or 5)))
         if not ctx:
@@ -935,6 +981,7 @@ class QuizService:
         rule_plan = P.plan_rule_quota(
             QuizService._applicable_rules(ctx, mode), count, offset=len(exclude_list)
         )
+        kind = P.normalize_kind(kind)
 
         collected: List[Dict[str, Any]] = []
         # ข้อที่ตรวจผ่านแล้ว แต่ถูกกันไว้เพราะซ้ำมุมหรือซ้ำโครง
@@ -951,7 +998,7 @@ class QuizService:
             # ยิ่งพยายามมาหลายรอบแล้วยังไม่ครบ ยิ่งผ่อนให้
             # ได้ข้อครบตามที่ผู้ใช้ขอ ดีกว่าคืนไม่ครบเพราะเนื้อหามีมุม/โครงให้ใช้จำกัด
             cap = P.structure_cap(tries)
-            allowed_angles = P.angles_for(difficulty, tries)
+            allowed_angles = P.angles_for(difficulty, tries, kind)
             acap = P.angle_cap(count, tries, len(allowed_angles))
 
             # โครง/มุมที่ใช้ครบโควตาแล้ว บอก AI ไปด้วยว่าห้ามออกซ้ำ (ใช้ทั้งปรนัยและถูก/ผิด)
@@ -961,12 +1008,12 @@ class QuizService:
             if qtype == "mcq":
                 batch = QuizService._gen_mcq_once(
                     ctx, request_n, excludes_now, topic_hints, difficulty, choices_count, mode,
-                    avoid, avoid_angles, rule_plan, tries,
+                    avoid, avoid_angles, rule_plan, tries, kind,
                 )
             else:
                 batch = QuizService._gen_tf_split(
                     ctx, request_n, excludes_now, topic_hints, difficulty, mode,
-                    avoid, avoid_angles, rule_plan, collected, tries,
+                    avoid, avoid_angles, rule_plan, collected, tries, kind,
                 )
 
             for q in batch:
@@ -975,7 +1022,7 @@ class QuizService:
                 text = str(q.get("question", ""))
                 if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
                     continue
-                if not QuizService._angle_allowed(q, difficulty, mode, tries):
+                if not QuizService._angle_allowed(q, difficulty, mode, tries, kind):
                     spare.append(q)     # มุมไม่เข้ากับระดับความยากที่ผู้ใช้เลือก
                     continue
                 if QuizService._structure_full(text, collected, mode, prior, cap):
@@ -1021,13 +1068,15 @@ class QuizService:
         avoid_angles: Optional[List[str]] = None,
         rule_plan: Optional[List[Tuple[str, int]]] = None,
         tries: int = 0,
+        kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         mode = P.normalize_mode(mode)
+        kind = P.normalize_kind(kind)
         exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
         topic_block = P.topic_block(topic_hints, n, mode)
 
         difficulty_block = P.difficulty_block(difficulty, mode)
-        answer_rules = P.ANSWER_RULES_MCQ[mode]
+        answer_rules = P.answer_rules_mcq(mode, kind)
         shuffle_line = P.shuffle_answer_line(mode)
 
         cc = QuizService._clamp_choices(choices_count)
@@ -1037,9 +1086,9 @@ class QuizService:
         answer_options = "|".join(letters)
 
         # โหมดเดิมได้ข้อความเดิมทุกตัวอักษร โหมดประยุกต์ได้บล็อกความหลากหลายเพิ่ม
-        mcq_json = P.mcq_json_format(mode, choices_example, answer_options)
+        mcq_json = P.mcq_json_format(mode, choices_example, answer_options, kind)
         avoid_block = QuizService._guidance_block(
-            "mcq", difficulty, mode, n, avoid, avoid_angles, rule_plan, tries
+            "mcq", difficulty, mode, n, avoid, avoid_angles, rule_plan, tries, kind
         )
 
         prompt = f"""
@@ -1082,10 +1131,10 @@ class QuizService:
         # ให้ Python คำนวณตรวจเฉลยซ้ำ ไม่ตรงก็ทิ้ง (ตรวจไม่ได้ = ปล่อยผ่าน)
         checked, math_dropped = [], 0
         for q in questions:
-            if QuizService._mcq_math_ok(q, cc) is False:
+            if QuizService._mcq_math_ok(q, cc, kind) is False:
                 math_dropped += 1
                 continue
-            if QuizService._explain_unreliable(q, cc, mode):
+            if QuizService._explain_unreliable(q, cc, mode, kind):
                 math_dropped += 1
                 continue
             checked.append(q)
@@ -1111,6 +1160,7 @@ class QuizService:
         rule_plan: Optional[List[Tuple[str, int]]],
         collected: List[Dict[str, Any]],
         tries: int = 0,
+        kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """ขอข้อสอบถูก/ผิด โดยแยกฝั่ง "จริง" กับ "เท็จ" เป็นคนละคำสั่ง ยิงพร้อมกัน
 
@@ -1142,7 +1192,7 @@ class QuizService:
             try:
                 return QuizService._gen_tf_once(
                     ctx, quota, exclude_list, topic_hints, difficulty, mode,
-                    want, avoid, avoid_angles, rule_plan, tries,
+                    want, avoid, avoid_angles, rule_plan, tries, kind,
                 )
             except Exception:
                 return []       # ฝั่งเดียวพัง ไม่ให้ล้มทั้งรอบ
@@ -1173,19 +1223,21 @@ class QuizService:
         avoid_angles: Optional[List[str]] = None,
         rule_plan: Optional[List[Tuple[str, int]]] = None,
         tries: int = 0,
+        kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         mode = P.normalize_mode(mode)
+        kind = P.normalize_kind(kind)
         exclude_block = P.exclude_block(exclude_list, settings.EXCLUDE_LIST_LIMIT, mode)
         topic_block = P.topic_block(topic_hints, n, mode)
 
         difficulty_block = P.difficulty_block(difficulty, mode)
-        answer_rules = P.ANSWER_RULES_TF[mode]
+        answer_rules = P.answer_rules_tf(mode, kind)
         rules_block = (answer_rules + "\n\n") if answer_rules else ""
-        want_block = P.tf_want_block(want, mode)
+        want_block = P.tf_want_block(want, mode, kind)
         avoid_block = QuizService._guidance_block(
-            "tf", difficulty, mode, n, avoid, avoid_angles, rule_plan, tries
+            "tf", difficulty, mode, n, avoid, avoid_angles, rule_plan, tries, kind
         )
-        tf_json = P.TF_JSON_FORMAT[mode]
+        tf_json = P.tf_json_format(mode, kind)
 
         # เนื้อหาชุดเดียวกับที่ส่งให้ตัวสร้าง จะถูกส่งให้ตัวตรวจใช้ตรวจขอบเขตด้วย
         # (ต้องเป็นชุดเดียวกัน ไม่งั้นตัวตรวจจะตีตกข้อที่ดีเพราะมองไม่เห็นกฎที่ตัวสร้างเห็น)

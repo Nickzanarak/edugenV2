@@ -8,7 +8,8 @@ import pytest
 
 from app.services import quiz_service
 from app.services.quiz_service import QuizService
-from app.services import quiz_prompts as P
+from app.services import prompts as P
+from app.services.prompts import applied_core, applied_math, applied_language
 
 
 # ----- _math_verdict -----
@@ -187,7 +188,7 @@ def test_tf_want_block_present_for_applied():
 
 
 def test_applied_tf_json_has_explain_before_answer():
-    j = P.TF_JSON_FORMAT["applied"]
+    j = P.tf_json_format("applied")
     assert j.index("explain") < j.index('"answer"')
     assert "expr" in j and "stated" in j
 
@@ -403,13 +404,13 @@ def test_avoid_angle_block_names_used_and_remaining():
 
 
 def test_compare_and_property_are_exempt_from_expr():
-    assert set(P.TF_ANGLES_WITHOUT_EXPR) == {"compare", "property"}
+    assert set(applied_math.ANGLES_WITHOUT_EXPR) == {"compare", "property"}
     # ระดับกลางมีมุม property -> ต้องบอกว่าไม่ต้องกรอก expr
     assert "ไม่ต้องกรอก expr" in P.angle_guide_block("medium", "applied", "tf")
 
 
 def test_applied_json_puts_angle_before_question():
-    j = P.TF_JSON_FORMAT["applied"]
+    j = P.tf_json_format("applied")
     assert j.index('"angle"') < j.index('"question"')
 
 
@@ -502,8 +503,8 @@ def test_mcq_gets_angle_guidance_in_applied_only():
 
 
 def test_mcq_applied_asks_for_expr_but_source_does_not():
-    assert "ช่อง expr" in P.ANSWER_RULES_MCQ["applied"]
-    assert "expr" not in P.ANSWER_RULES_MCQ["source"]
+    assert "ช่อง expr" in P.answer_rules_mcq("applied")
+    assert "expr" not in P.answer_rules_mcq("source")
 
 
 # ----- มุมต้องสอดคล้องกับระดับความยาก -----
@@ -774,6 +775,108 @@ def test_missing_explain_is_not_dropped():
     assert QuizService._explain_unreliable(q, 4, "applied") is False
 
 
+# ----- ป้ายชนิดเนื้อหา (kind) ที่ตัวหากฎติดมาให้ -----
+#
+# เดิมตัวดักต้อง "เดา" จากคำอธิบายว่าข้อนี้เป็นคณิตไหม แก้ตัวเดาไป 3 รอบก็ยัง
+# เดาผิดกับวิชาใหม่ทุกครั้ง ตอนนี้ตัวหากฎบอกมาตั้งแต่ต้น แล้วทุกอย่างอ่านป้ายแทน
+
+def test_kind_default_is_math_so_everything_behaves_as_before():
+    """ไม่มีป้าย (โหมดเดิม / หากฎไม่สำเร็จ / AI ไม่ส่ง kind) = คณิต = พฤติกรรมเดิม"""
+    assert P.normalize_kind(None) == P.KIND_MATH
+    assert P.normalize_kind("") == P.KIND_MATH
+    assert P.normalize_kind("ไม่รู้จัก") == P.KIND_MATH
+    assert P.normalize_kind("LANGUAGE") == P.KIND_LANGUAGE
+    QuizService._KIND_CACHE.clear()
+    assert QuizService._detect_kind("เนื้อหาใด ๆ", "source") == P.KIND_MATH   # โหมดเดิมไม่ถาม
+
+
+def test_detect_kind_asks_once_per_document(monkeypatch):
+    """ถามป้ายครั้งเดียวต่อเอกสาร ครั้งต่อไป (กดง่าย/กลาง/ยาก) ใช้ของเดิม"""
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["messages"][0]["content"])
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content='{"kind": "language"}'))])
+
+    monkeypatch.setattr(
+        quiz_service.client, "chat",
+        SimpleNamespace(completions=SimpleNamespace(create=fake_create)),
+    )
+    QuizService._KIND_CACHE.clear()
+    ctx = "เงื่อนไขแบบที่ 2 " * 200
+    assert QuizService._detect_kind(ctx, "applied") == P.KIND_LANGUAGE
+    assert QuizService._detect_kind(ctx, "applied") == P.KIND_LANGUAGE
+    assert len(calls) == 1
+    assert "math|language|general" in calls[0]
+
+
+def test_detect_kind_falls_back_to_math_when_ai_fails(monkeypatch):
+    def boom(**kwargs):
+        raise RuntimeError("AI ล่ม")
+
+    monkeypatch.setattr(
+        quiz_service.client, "chat",
+        SimpleNamespace(completions=SimpleNamespace(create=boom)),
+    )
+    QuizService._KIND_CACHE.clear()
+    assert QuizService._detect_kind("อะไรก็ได้ " * 50, "applied") == P.KIND_MATH
+
+
+def test_language_kind_turns_off_number_guessing_detector():
+    """ป้าย language = ตัวดักที่อ่านร่องรอยการมั่วเลขต้องปิด แม้คำอธิบายจะดูเหมือนคณิต"""
+    q = _explained(
+        ["ก) 8 พจน์", "ข) 7 พจน์", "ค) 9 พจน์", "ง) 10 พจน์"],
+        "ลอง n=8 ได้ 8×29=232 ไม่ใช่ จึงปรับให้ตรงกับตัวเลือกที่ถูกต้อง ดังนั้นคำตอบที่ถูกต้องคือ 8 พจน์",
+    )
+    assert QuizService._explain_unreliable(q, 4, "applied", P.KIND_MATH) is True
+    assert QuizService._explain_unreliable(q, 4, "applied", P.KIND_LANGUAGE) is False
+    assert QuizService._explain_unreliable(q, 4, "applied", P.KIND_GENERAL) is False
+
+
+def test_language_prompts_have_no_number_fields():
+    """ชุดภาษา: ไม่มี expr/stated (ต้นเหตุของ '1 book') และ TF ต้องมีข้อความอ้าง"""
+    mcq = P.answer_rules_mcq("applied", P.KIND_LANGUAGE)
+    tf = P.answer_rules_tf("applied", P.KIND_LANGUAGE)
+    assert "expr" not in mcq and "stated" not in mcq
+    assert "expr" not in tf and "stated" not in tf
+    assert "ข้อความอ้าง" in tf
+    assert "1 book" in mcq            # บอกตรง ๆ ว่าห้ามยัดตัวเลข
+    assert "expr" not in P.tf_json_format("applied", P.KIND_LANGUAGE)
+    assert "expr" not in P.mcq_json_format("applied", '"ก) ..."', "ก|ข", P.KIND_LANGUAGE)
+    # ชุดคณิตยังมีเหมือนเดิม
+    assert "expr" in P.tf_json_format("applied", P.KIND_MATH)
+    assert "expr" in P.answer_rules_mcq("applied", P.KIND_MATH)
+
+
+def test_language_angles_are_separate_and_tied_to_difficulty():
+    easy = P.angles_for("easy", 0, P.KIND_LANGUAGE)
+    hard = P.angles_for("hard", 0, P.KIND_LANGUAGE)
+    assert set(easy) <= set(applied_language.ANGLES) and set(hard) <= set(applied_language.ANGLES)
+    assert easy != hard
+    assert not set(applied_language.ANGLES) & set(applied_math.ANGLES)    # รหัสไม่ชนกับชุดคณิต
+    # ผ่อนจนสุดแล้วได้ทุกมุมของชุดตัวเอง ไม่ใช่ของชุดคณิต
+    assert set(P.angles_for("hard", 4, P.KIND_LANGUAGE)) == set(applied_language.ANGLES)
+    guide = P.angle_guide_block("easy", "applied", "mcq", 0, P.KIND_LANGUAGE)
+    assert "identify" in guide and "value" not in guide
+
+
+def test_language_angle_is_recognised_and_checked():
+    q = {"type": "mcq", "question": "โจทย์", "answer": "ก", "angle": "identify"}
+    assert QuizService._angle_of(q) == "identify"
+    assert QuizService._angle_allowed(q, "easy", "applied", 0, P.KIND_LANGUAGE) is True
+    assert QuizService._angle_allowed(q, "hard", "applied", 0, P.KIND_LANGUAGE) is False
+
+
+def test_source_mode_ignores_kind():
+    """โหมดเดิมไม่รู้จักป้าย ได้ข้อความเดิมไม่ว่าจะส่ง kind อะไรมา"""
+    from app.services.prompts import source as S
+    for kind in P.KINDS:
+        assert P.answer_rules_mcq("source", kind) == S.ANSWER_RULES_MCQ
+        assert P.tf_json_format("source", kind) == S.TF_JSON
+        assert P.angle_guide_block("easy", "source", "mcq", 0, kind) == ""
+
+
 # ----- cache กฎต้องทำงานตอนหลายเธรดเรียกพร้อมกัน -----
 
 def test_rules_cache_asks_ai_once_under_concurrency(monkeypatch):
@@ -829,7 +932,7 @@ def test_rule_plan_covers_everything_it_can(n_rules, per_round):
 def test_walk_stride_visits_every_rule_before_repeating(n_rules, count):
     """หัวใจของการแก้: ระยะก้าวต้องหารร่วมกับจำนวนกฎได้ 1"""
     import math as _math
-    assert _math.gcd(P._walk_stride(n_rules, count), n_rules) == 1
+    assert _math.gcd(applied_core._walk_stride(n_rules, count), n_rules) == 1
 
 
 # ----- ไม่มีสูตร = ตรวจไม่ได้ ต้องปล่อยผ่าน ไม่ใช่ทิ้ง -----
@@ -911,7 +1014,7 @@ def test_relaxes_after_a_couple_of_failed_rounds():
 
 def test_gives_up_enforcing_entirely_at_the_end():
     """รอบท้าย ๆ ต้องรับทุกมุม ไม่งั้นเอกสารบางจะได้ข้อสอบน้อยเกินไป"""
-    for angle in P.TF_ANGLES:
+    for angle in applied_math.ANGLES:
         assert QuizService._angle_allowed(_angled(angle), "easy", "applied", tries=4) is True
 
 
@@ -928,7 +1031,7 @@ def test_question_without_declared_angle_passes():
 def test_angles_widen_step_by_step():
     assert set(P.angles_for("hard", 0)) == {"reverse", "compare"}
     assert set(P.angles_for("hard", 2)) == {"reverse", "compare", "situation"}
-    assert set(P.angles_for("hard", 4)) == set(P.TF_ANGLES)
+    assert set(P.angles_for("hard", 4)) == set(applied_math.ANGLES)
 
 
 def test_angle_guide_block_follows_the_relaxation():
