@@ -138,6 +138,86 @@ class QuizService:
         return kept
 
     @staticmethod
+    def _review_mcq(
+        items: List[Dict[str, Any]],
+        cc: int,
+        mode: str,
+        kind: Optional[str],
+        context: str,
+    ) -> List[Dict[str, Any]]:
+        """ส่งข้อสอบปรนัยกลับไปให้ AI เลือกคำตอบใหม่ทั้งชุด แล้วทิ้งข้อที่ไม่ตรงกัน
+
+        ใช้เฉพาะโหมดประยุกต์ + เล่มภาษา/ทั่วไป (คณิตมี Python คำนวณตรวจอยู่แล้ว
+        ใน _mcq_math_ok ไม่ต้องเสียคำถาม AI เพิ่ม) โครงเดียวกับ _review_tf:
+        ตัวตรวจไม่เห็นเฉลยเดิม เลือกเอง แล้วโค้ดเทียบ
+
+        ทิ้งข้อเมื่อ: ตัวตรวจเลือกคนละตัว / ตอบ none (ไม่มีตัวถูก หรือโจทย์ตั้งผิด
+        เช่น ถาม "ผิดตรงไหน" กับประโยคที่ถูกอยู่แล้ว) / ชี้ว่ามีตัวเลือกอื่นถูกด้วย
+
+        fail-closed เหมือน _review_tf: ตรวจไม่สำเร็จ = ทิ้งทั้งชุด ให้ลูปสร้างใหม่
+        """
+        if (P.normalize_mode(mode) != P.MODE_APPLIED or P.normalize_kind(kind) == P.KIND_MATH
+                or not items):
+            return items
+
+        try:
+            with timed("quiz: mcq review", f"{len(items)} ข้อ"):
+                r = client.chat.completions.create(
+                    model=settings.AI_MODEL,
+                    messages=[{"role": "user", "content": P.mcq_review_prompt(items, context)}],
+                    temperature=0,
+                    response_format={"type": "json_object"},
+                )
+            data = safe_json_loads(r.choices[0].message.content, {"results": []})
+        except Exception:
+            print("[TIME] quiz: mcq review ล้มเหลว ทิ้งทั้งชุด (fail-closed)")
+            return []
+
+        letters = QuizService.CHOICE_LETTERS[:cc]
+        verdicts: Dict[int, Tuple[str, str]] = {}      # index -> (answer, extra)
+        for res in data.get("results", []):
+            try:
+                i = int(res.get("index", -1))
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= i < len(items)):
+                continue
+            ans = str(res.get("answer", "")).strip()
+            extra = str(res.get("extra", "")).strip().lower()
+            verdicts[i] = (ans, extra)
+
+        if not verdicts:
+            print("[TIME] quiz: mcq review ไม่ได้ผลที่ใช้ได้ ทิ้งทั้งชุด (fail-closed)")
+            return []
+
+        kept: List[Dict[str, Any]] = []
+        mismatch = broken = ambiguous = 0
+        for i, q in enumerate(items):
+            verdict = verdicts.get(i)
+            if verdict is None:
+                kept.append(q)                  # ตัวตรวจไม่ตอบข้อนี้ ไม่มีหลักฐานว่าผิด
+                continue
+            ans, extra = verdict
+            if ans not in letters:
+                broken += 1                     # none หรือค่าแปลก = ไม่มีตัวถูก/โจทย์ตั้งผิด
+                continue
+            if ans != str(q.get("answer", "")).strip():
+                mismatch += 1
+                continue
+            if extra in [l.lower() for l in letters] and extra != ans.lower():
+                ambiguous += 1
+                continue
+            kept.append(q)
+
+        if mismatch:
+            print(f"[TIME] quiz: mcq review dropped {mismatch} ข้อ (เฉลยไม่ตรงกับตัวตรวจ)")
+        if broken:
+            print(f"[TIME] quiz: mcq review dropped {broken} ข้อ (ไม่มีตัวเลือกถูก/โจทย์ตั้งผิด)")
+        if ambiguous:
+            print(f"[TIME] quiz: mcq review dropped {ambiguous} ข้อ (ถูกได้มากกว่าหนึ่งตัวเลือก)")
+        return kept
+
+    @staticmethod
     def _math_verdict(q: Dict[str, Any]) -> Optional[str]:
         """เฉลยที่ถูกต้องของข้อคำนวณ ตัดสินโดย Python ไม่ใช่ AI
 
@@ -473,6 +553,7 @@ class QuizService:
         difficulty: Optional[str],
         mode: Optional[str],
         dup_threshold: float,
+        kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """ปรับสัดส่วนเฉลย จริง/เท็จ หลังได้ข้อสอบครบแล้ว (เฉพาะถูก/ผิด โหมดประยุกต์)
 
@@ -518,6 +599,7 @@ class QuizService:
                     mode,
                     want,
                     QuizService._overused_questions(kept, mode, prior=prior),
+                    kind=kind,      # รอบสลับต้องใช้เล่มเดียวกับรอบหลัก ไม่งั้นได้โจทย์สไตล์คณิตปนมา
                 )
         except Exception:
             return collected        # ปรับไม่ได้ ก็ใช้ของเดิม ดีกว่าล้มทั้งคำขอ
@@ -531,6 +613,8 @@ class QuizService:
             text = str(q.get("question", ""))
             if any(similar(text, str(e.get("question", ""))) >= dup_threshold
                    for e in kept + fresh):
+                continue
+            if QuizService._content_dup(q, "tf", None, mode, kind, kept + fresh, exclude_list):
                 continue
             # ผ่อนเพดานตอนสลับ ไม่งั้นโครงเต็มแล้วจะสลับไม่สำเร็จ เฉลยก็เอียงต่อไป
             if QuizService._structure_full(
@@ -763,6 +847,42 @@ class QuizService:
         return t
 
     @staticmethod
+    def _content_dup(
+        q: Dict[str, Any],
+        qtype: str,
+        choices_count: Optional[int],
+        mode: Optional[str],
+        kind: Optional[str],
+        collected: List[Dict[str, Any]],
+        exclude_list: List[Dict[str, str]],
+    ) -> bool:
+        """ด่านซ้ำเพิ่มของเล่มภาษา/ทั่วไป: เทียบ "เนื้อ" ของข้อ ไม่ใช่แค่ประโยคคำถาม
+
+        ตัวกรองซ้ำปกติดูแต่ประโยคคำถาม ซึ่งพอกับคณิต (โจทย์คือคำถาม) แต่โจทย์ภาษา
+        ถามด้วยสำนวนต่างกันได้ไม่รู้จบ ("ประโยคใดใช้..." / "สถานการณ์ใดเหมาะกับ...")
+        ทั้งที่เฉลยเป็นประโยคเดียวกัน ตัวกรองจึงมองว่าคนละข้อ
+        (วัดจริงจากไวยากรณ์อังกฤษ 15 ข้อ: เฉลย "If water is heated, it melts." ซ้ำ 3 ข้อ)
+          ปรนัย   เทียบประโยคเฉลย (ตัวเลือกที่กาไว้) กับเฉลยของข้อที่มีแล้ว
+                  รวมข้อจากรอบก่อน ๆ ที่หน้าเว็บส่งมา (ส่งเฉลยเป็นข้อความตัวเลือกอยู่แล้ว)
+          ถูก/ผิด เทียบตัวโจทย์ทั้งข้อ แต่ใช้เกณฑ์เข้มกว่าปกติ เพราะไม่มีเลขให้ต่างกัน
+        คณิตไม่ผ่านด่านนี้: เฉลยเป็นตัวเลข เลขเดียวกันเป็นคนละข้อได้เป็นเรื่องปกติ
+        """
+        if P.normalize_mode(mode) != P.MODE_APPLIED or P.normalize_kind(kind) == P.KIND_MATH:
+            return False
+        if qtype == "mcq":
+            cc = QuizService._clamp_choices(choices_count)
+            mine = QuizService._picked_choice(q, cc) or ""
+            seen = [QuizService._picked_choice(e, cc) or "" for e in collected]
+            seen += [QuizService._strip_choice_prefix(str(e.get("answer") or "")) for e in exclude_list]
+        else:
+            mine = str(q.get("question") or "")
+            seen = [str(e.get("question") or "") for e in collected + exclude_list]
+        mine = mine.strip()
+        if not mine:
+            return False
+        return any(t and similar(mine, t) >= P.CONTENT_DUP_THRESHOLD for t in seen)
+
+    @staticmethod
     def _has_banned_choice(q: Dict[str, Any]) -> bool:
         for c in q.get("choices") or []:
             text = str(c).lower()
@@ -851,7 +971,7 @@ class QuizService:
                 qtype, ctx, count, exclude, topics, difficulty, choices_count, mode=mode, kind=kind
             )
             return QuizService._strip_internal(QuizService._rebalance_tf(
-                collected, qtype, ctx, exclude_list, difficulty, mode, dup_threshold
+                collected, qtype, ctx, exclude_list, difficulty, mode, dup_threshold, kind
             ))
 
         # ---- เอกสารยาว: แบ่งโควตาข้อให้แต่ละก้อน ----
@@ -900,21 +1020,45 @@ class QuizService:
                 results = list(pool.map(work, picked))
 
         # ---- รวมผล + กรองข้อซ้ำข้ามก้อน (รวมโครงประโยคซ้ำ ซึ่งแต่ละก้อนมองไม่เห็นกัน) ----
+        #
+        # ลำดับการหยิบ:
+        #   โหมดเดิม     ไล่ทีละก้อนจนหมด (ของเดิม ไม่แตะ) — ตอนรวมมีแค่ด่านกันซ้ำ ไม่มีใครโดนปัดตก
+        #   โหมดประยุกต์ สลับฟันปลา: หยิบข้อแรกของทุกก้อนก่อน แล้วค่อยวนหยิบข้อที่สอง
+        #     เพราะด่านโครง/ด่านมุมข้างล่างปัดตกจริง ถ้าไล่ทีละก้อน ก้อนท้าย (บทท้าย) มาถึง
+        #     ตอนเพดานเต็มพอดีและแพ้ทุกครั้ง วัดจริงกับชีววิทยา 14 หน้า 5 บท: ระดับง่ายออก
+        #     "จัดอยู่กลุ่มใด" แทบทุกข้อ บท 5-7 กินเพดานหมด บท 8-9 ได้ 0 ข้อ
+        #     สลับฟันปลาทำให้ทุกก้อนได้ข้อแรกเข้าชุดก่อนที่ก้อนไหนจะได้ข้อที่สอง
+        if P.normalize_mode(mode) == P.MODE_APPLIED:
+            ordered = [
+                batch[i]
+                for i in range(max((len(b) for b in results), default=0))
+                for batch in results
+                if i < len(batch)
+            ]
+        else:
+            ordered = [q for batch in results for q in batch]
+
         collected: List[Dict[str, Any]] = []
-        for batch in results:
-            for q in batch:
-                if len(collected) >= count:
-                    break
-                text = str(q.get("question", ""))
-                if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
-                    continue
-                if QuizService._structure_full(text, collected, mode, prior):
-                    continue
-                if QuizService._angle_full(
-                    QuizService._angle_of(q), collected, mode, P.angle_cap(count)
-                ):
-                    continue      # แต่ละก้อนมองไม่เห็นกัน ต้องคุมมุมตอนรวมผลด้วย
-                collected.append(q)
+        for q in ordered:
+            if len(collected) >= count:
+                break
+            text = str(q.get("question", ""))
+            if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
+                continue
+            if QuizService._content_dup(q, qtype, choices_count, mode, kind, collected, exclude_list):
+                continue      # แต่ละก้อนมองไม่เห็นกัน เฉลยเดียวกันมาจากคนละก้อนได้
+            if QuizService._structure_full(text, collected, mode, prior):
+                continue
+            # เพดานต้องคิดจาก "จำนวนมุมที่ระดับนี้ใช้ได้" เหมือนในลูปหลัก ไม่ใช่ 5 มุมเสมอ
+            # เดิมลืมส่ง -> ระดับง่าย/ยากมี 2 มุม ขอ 7 ข้อได้เพดานแค่ 3 ต่อมุม ข้อจากก้อนท้าย ๆ
+            # โดนปัดตกทุกครั้ง แล้วรอบเก็บตกไปหยิบจากก้อนที่ยาวที่สุดแทน
+            # วัดจริงกับชีววิทยา 14 หน้า 5 บท: 30 ข้อมาจาก 3 บทแรก อีก 2 บทได้ 0 ข้อ
+            if QuizService._angle_full(
+                QuizService._angle_of(q), collected, mode,
+                P.angle_cap(count, 0, len(P.angles_for(difficulty, 0, kind))),
+            ):
+                continue      # แต่ละก้อนมองไม่เห็นกัน ต้องคุมมุมตอนรวมผลด้วย
+            collected.append(q)
 
         # ---- ถ้ายังไม่ครบ (บางก้อนเนื้อหาบาง) เก็บตกจากก้อนที่ยาวที่สุด ----
         richest = max(range(len(chunks)), key=lambda i: len(chunks[i]))
@@ -932,6 +1076,8 @@ class QuizService:
                     text = str(q.get("question", ""))
                     if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
                         continue
+                    if QuizService._content_dup(q, qtype, choices_count, mode, kind, collected, exclude_list):
+                        continue
                     # รอบเก็บตกแล้ว ผ่อนเพดานให้เหมือนกัน ไม่งั้นเก็บตกไม่ได้เลย
                     if QuizService._structure_full(
                         text, collected, mode, prior, P.structure_cap(2)
@@ -942,7 +1088,7 @@ class QuizService:
                 pass
 
         return QuizService._strip_internal(QuizService._rebalance_tf(
-            collected[:count], qtype, chunks[richest], exclude_list, difficulty, mode, dup_threshold
+            collected[:count], qtype, chunks[richest], exclude_list, difficulty, mode, dup_threshold, kind
         ))
 
     @staticmethod
@@ -1022,6 +1168,8 @@ class QuizService:
                 text = str(q.get("question", ""))
                 if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
                     continue
+                if QuizService._content_dup(q, qtype, choices_count, mode, kind, collected, exclude_list):
+                    continue            # เฉลยประโยคเดิม = ข้อเดิม แม้คำถามจะเขียนคนละสำนวน
                 if not QuizService._angle_allowed(q, difficulty, mode, tries, kind):
                     spare.append(q)     # มุมไม่เข้ากับระดับความยากที่ผู้ใช้เลือก
                     continue
@@ -1048,6 +1196,8 @@ class QuizService:
                     break
                 text = str(q.get("question", ""))
                 if any(similar(text, str(e.get("question", ""))) >= dup_threshold for e in collected):
+                    continue
+                if QuizService._content_dup(q, qtype, choices_count, mode, kind, collected, exclude_list):
                     continue
                 collected.append(q)
             if len(collected) > before:
@@ -1141,11 +1291,29 @@ class QuizService:
         if math_dropped:
             print(f"[TIME] quiz: mcq math dropped {math_dropped} ข้อ (เฉลยไม่ตรงผลคำนวณ)")
 
+        # เล่มภาษา/ทั่วไปไม่มี Python ตรวจเฉลย ให้ AI ตรวจทานแทน (คณิตข้ามด่านนี้)
+        checked = QuizService._review_mcq(
+            checked, cc, mode, kind, sample_across_document(ctx, settings.CTX_CHAR_LIMIT)
+        )
+
         return filter_near_dups(
             checked,
             [x["question"] for x in QuizService._normalize_exclude(exclude_list)],
             threshold=P.near_dup_threshold(mode, settings.NEAR_DUP_THRESHOLD),
         )
+
+    @staticmethod
+    def _split_rule_plan(
+        rule_plan: Optional[List[Tuple[str, int]]],
+    ) -> Dict[str, Optional[List[Tuple[str, int]]]]:
+        """แบ่งแผนกฎให้ฝั่งจริง/เท็จคนละครึ่ง สลับกัน (จริงได้ตัวที่ 1,3,5 เท็จได้ 2,4,6)
+
+        แบ่งไม่ได้ (ว่าง หรือมีกฎเดียว) ให้ทั้งสองฝั่งได้แผนเดิมทั้งชุด
+        """
+        plan = list(rule_plan or [])
+        if len(plan) < 2:
+            return {"true": rule_plan, "false": rule_plan}
+        return {"true": plan[0::2], "false": plan[1::2]}
 
     @staticmethod
     def _gen_tf_split(
@@ -1187,12 +1355,18 @@ class QuizService:
             ("false", max(1, half + 2 + max(0, n_true_have - n_false_have))),
         ]
 
+        # สองฝั่งยิงพร้อมกันและไม่เห็นกัน ถ้าได้กฎชุดเดียวกันจะหยิบ "ตัวอย่างเด่นสุดของกฎนั้น"
+        # มาเหมือนกัน แล้วออกมาเป็นคู่ กรณีเดียวกัน จริง 1 ข้อ เท็จ 1 ข้อ (ชีววิทยา 4 คู่ใน 15)
+        # แบ่งกฎให้คนละครึ่ง (ตัวที่ 1,3,5 / 2,4,6) ให้สองฝั่งทำงานคนละกฎ = คนละกรณีโดยธรรมชาติ
+        # โดยไม่ต้องรอกันจึงไม่ช้าขึ้น ถ้ามีกฎเดียวแบ่งไม่ได้ ก็ให้ทั้งสองฝั่งเหมือนเดิม
+        plans = QuizService._split_rule_plan(rule_plan)
+
         def work(job):
             want, quota = job
             try:
                 return QuizService._gen_tf_once(
                     ctx, quota, exclude_list, topic_hints, difficulty, mode,
-                    want, avoid, avoid_angles, rule_plan, tries, kind,
+                    want, avoid, avoid_angles, plans[want], tries, kind,
                 )
             except Exception:
                 return []       # ฝั่งเดียวพัง ไม่ให้ล้มทั้งรอบ

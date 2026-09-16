@@ -41,6 +41,16 @@ REVIEW_ITEMS = [
     {"question": "ลำดับ 5, 8, 11 พจน์ที่ 4 คือ 14", "answer": "true", "explain": "5+3*3=14"},
     {"question": "ผลบวก 3 พจน์แรกของ 2, 4, 6 คือ 10", "answer": "false", "explain": "2+4+6=12"},
 ]
+MCQ_REVIEW_ITEMS = [
+    {"question": "ประโยคใดใช้เงื่อนไขแบบที่ 2 ได้ถูกต้อง",
+     "choices": ["ก) If she were free, she would join us.", "ข) If she is free, she would join us.",
+                 "ค) If she were free, she will join us.", "ง) If she was free, she joins us."],
+     "answer": "ก"},
+    {"question": "ประโยคต่อไปนี้ผิดตรงไหน: If the alarm rings, we will leave immediately.",
+     "choices": ["ก) เปลี่ยน rings เป็น rang", "ข) เปลี่ยน will leave เป็น leave",
+                 "ค) เปลี่ยน alarm เป็น alarms", "ง) เปลี่ยน immediately เป็น immediate"],
+     "answer": "ข"},
+]
 
 
 def capture():
@@ -97,6 +107,7 @@ def capture():
     out["rules"] = P.applicable_rules_prompt(CTX)
     out["kind"] = P.content_kind_prompt(CTX)
     out["tf-review"] = P.tf_review_prompt(REVIEW_ITEMS, CTX)
+    out["mcq-review"] = P.mcq_review_prompt(MCQ_REVIEW_ITEMS, CTX)
     return out
 
 

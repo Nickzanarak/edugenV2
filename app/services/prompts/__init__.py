@@ -17,9 +17,9 @@ from app.services.prompts import applied_math, applied_language, applied_general
 from app.services.prompts.applied_core import (      # ให้เรียกผ่านสวิตช์ได้เลย
     KIND_MATH, KIND_LANGUAGE, KIND_GENERAL, KINDS, KIND_DEFAULT, normalize_kind,
     content_kind_prompt, applicable_rules_prompt, MAX_APPLICABLE_RULES,
-    tf_review_prompt, plan_rule_quota,
+    tf_review_prompt, mcq_review_prompt, plan_rule_quota,
     STRUCTURE_SIM_THRESHOLD, APPLIED_STRUCTURE_CAP, APPLIED_STRUCTURE_CAP_MAX,
-    structure_cap, angle_cap, APPLIED_NEAR_DUP_THRESHOLD,
+    structure_cap, angle_cap, APPLIED_NEAR_DUP_THRESHOLD, CONTENT_DUP_THRESHOLD,
 )
 
 MODE_SOURCE = "source"
