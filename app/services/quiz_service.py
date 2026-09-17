@@ -20,6 +20,17 @@ from app.services import prompts as P
 class QuizService:
     CHOICE_LETTERS = ["ก", "ข", "ค", "ง", "จ", "ฉ"]
 
+    @staticmethod
+    def _log_fail(step: str, e: Exception) -> None:
+        """บอกใน log ว่าขั้นไหนถาม AI ไม่สำเร็จ และเพราะอะไร (บรรทัดเดียว)
+
+        ทุกจุดที่จับ error แล้วถอยไปทำงานต่อ (ถอยเป็นคณิต / ได้ 0 กฎ / ก้อนนี้ได้ 0 ข้อ)
+        เดิมเงียบหมด พอเครดิต OpenAI หมด (429) ทุกขั้นล้มพร้อมกัน log จึงเหลือแต่
+        บรรทัดเวลา ไม่มีผลลัพธ์ และหน้าเว็บบอกแค่ "ไม่พบข้อใหม่" แยกไม่ออกจากเนื้อหาไม่ดี
+        """
+        reason = str(e).replace("\n", " ").strip()
+        print(f"[TIME] quiz: {step} ล้มเหลว ({type(e).__name__}: {reason[:160]})")
+
     BANNED_PATTERNS = [
         "ทั้งหมดที่กล่าวมา", "ทุกข้อข้างต้น", "ถูกทุกข้อ", "ผิดทุกข้อ",
         "ทั้งหมดข้างต้น", "ไม่มีข้อใดถูก", "ไม่มีข้อถูก", "ไม่ถูกสักข้อ",
@@ -86,8 +97,8 @@ class QuizService:
                     response_format={"type": "json_object"},
                 )
             data = safe_json_loads(r.choices[0].message.content, {"results": []})
-        except Exception:
-            print("[TIME] quiz: review ล้มเหลว ทิ้งทั้งชุด (fail-closed)")
+        except Exception as e:
+            QuizService._log_fail("review ทิ้งทั้งชุด fail-closed", e)
             return []                        # ตรวจไม่ได้ = ไม่การันตีความถูกต้อง จึงไม่ให้ผ่าน
 
         # ผลตัดสินของตัวตรวจ ต่อ index (ไม่เชื่อ 100% แค่ใช้เทียบว่าตรงกับตัวสร้างไหม)
@@ -169,8 +180,8 @@ class QuizService:
                     response_format={"type": "json_object"},
                 )
             data = safe_json_loads(r.choices[0].message.content, {"results": []})
-        except Exception:
-            print("[TIME] quiz: mcq review ล้มเหลว ทิ้งทั้งชุด (fail-closed)")
+        except Exception as e:
+            QuizService._log_fail("mcq review ทิ้งทั้งชุด fail-closed", e)
             return []
 
         letters = QuizService.CHOICE_LETTERS[:cc]
@@ -398,7 +409,8 @@ class QuizService:
                         response_format={"type": "json_object"},
                     )
                 data = safe_json_loads(r.choices[0].message.content, {"rules": []})
-            except Exception:
+            except Exception as e:
+                QuizService._log_fail("rules (ได้ 0 กฎ)", e)
                 return []
 
             rules = [str(x).strip() for x in data.get("rules", []) if str(x).strip()]
@@ -439,7 +451,8 @@ class QuizService:
                     response_format={"type": "json_object"},
                 )
             data = safe_json_loads(r.choices[0].message.content, {})
-        except Exception:
+        except Exception as e:
+            QuizService._log_fail("kind (ถอยไปใช้เล่มคณิต)", e)
             return P.KIND_DEFAULT
         kind = P.normalize_kind(data.get("kind"))
         if len(QuizService._KIND_CACHE) >= QuizService._RULES_CACHE_LIMIT:
@@ -601,7 +614,8 @@ class QuizService:
                     QuizService._overused_questions(kept, mode, prior=prior),
                     kind=kind,      # รอบสลับต้องใช้เล่มเดียวกับรอบหลัก ไม่งั้นได้โจทย์สไตล์คณิตปนมา
                 )
-        except Exception:
+        except Exception as e:
+            QuizService._log_fail("rebalance (ใช้ชุดเดิม)", e)
             return collected        # ปรับไม่ได้ ก็ใช้ของเดิม ดีกว่าล้มทั้งคำขอ
 
         fresh: List[Dict[str, Any]] = []
@@ -1012,7 +1026,8 @@ class QuizService:
                     mode=mode,
                     kind=kind,
                 )
-            except Exception:
+            except Exception as e:
+                QuizService._log_fail(f"ก้อนที่ {idx + 1} (ได้ 0 ข้อ)", e)
                 return []   # ก้อนเดียวพัง ไม่ให้ล้มทั้งคำขอ
 
         with timed("quiz: map", f"{len(picked)} ก้อน จาก {len(chunks)} ก้อน, ขอ {count} ข้อ"):
@@ -1084,8 +1099,8 @@ class QuizService:
                     ):
                         continue
                     collected.append(q)
-            except Exception:
-                pass
+            except Exception as e:
+                QuizService._log_fail("เก็บตก (ไม่ได้ข้อเพิ่ม)", e)
 
         return QuizService._strip_internal(QuizService._rebalance_tf(
             collected[:count], qtype, chunks[richest], exclude_list, difficulty, mode, dup_threshold, kind
@@ -1368,7 +1383,8 @@ class QuizService:
                     ctx, quota, exclude_list, topic_hints, difficulty, mode,
                     want, avoid, avoid_angles, plans[want], tries, kind,
                 )
-            except Exception:
+            except Exception as e:
+                QuizService._log_fail(f"tf ฝั่ง {want} (ได้ 0 ข้อ)", e)
                 return []       # ฝั่งเดียวพัง ไม่ให้ล้มทั้งรอบ
 
         with timed("quiz: tf split", f"จริง {jobs[0][1]} + เท็จ {jobs[1][1]} ข้อ"):
