@@ -18,3 +18,6 @@ venv/
 node_modules/
 .next/
 out/
+
+# ---- report examples from other groups (not ours, keep local) ----
+docs/report-examples/
