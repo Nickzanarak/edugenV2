@@ -265,46 +265,63 @@ export default function Home() {
   const uploadPdf = async (file: File | null) => {
     // เช็คสิทธิ์ก่อนเริ่มทำอะไร ถ้ายังไม่ได้เข้าสู่ระบบให้อยู่หน้าเดิม
     // (เดิมเปลี่ยนไปหน้าทำงานก่อนแล้วค่อย 401 ทำให้ผู้ใช้ค้างอยู่หน้าว่างเปล่า)
-    if (file && !canUseProtectedApi(!!currentUser)) {
+    if (file && !canUseProtectedApi(!!currentUser)) { //ถ้ามีไฟล์แต่ยังไม่ได้ล็อกอิน ให้เปิดหน้าต่างล็อกอิน แล้วหยุดตรงนี้ (return = จบฟังก์ชัน)
       setLoginRequired(true);
       return;
     }
 
-    setPdf(file); setPdfText("");
-    setHiddenContext("");
 
+    setPdf(file); setPdfText(""); setHiddenContext(""); // เก็บไฟล์ที่เลือก  ,  ล้างข้อความที่อ่านจาก PDF ตัวก่อน  ,  ล้างข้อมูลเบื้องหลังที่ใช้ส่งให้ AI  
+
+    // กำหนด ID ให้ไฟล์นี้ โดยเลือกตามลำดับ:
+    // 1. ถ้ากำลังเปิดประวัติเดิมอยู่ ใช้ ID ของประวัตินั้น
+    // 2. ถ้ามีไฟล์ ใช้ชื่อไฟล์ตัด ".pdf" ออก (ถ้าชื่อว่างเปล่าใช้ "pdf-file")
+    // 3. ถ้าไม่มีไฟล์เลย ใช้ "manual" (กรณีพิมพ์ข้อความเอง)
     const fid = currentHistoryId ? currentHistoryId : (file ? file.name.replace(/\.pdf$/i, "") || "pdf-file" : "manual");
     setFileId(fid);
 
     firstLoadRef.current = true;
-    await loadNote(fid);
+    await loadNote(fid); // โหลดโน้ตที่เคยบันทึกไว้ของไฟล์นี้
 
     if (file) {
-      setIsLanding(false);
-      setLoading(true);
+      setIsLanding(false); // ออกจากหน้าแรก ไปหน้าทำงาน
+      setLoading(true); // แสดงสถานะกำลังโหลด
+
       const sizeMB = file.size / (1024 * 1024);
-      setLoadingText(
+
+      setLoadingText( // ถ้าไฟล์ใหญ่กว่า 2MB บอกผู้ใช้ว่าอาจใช้เวลานาน
         sizeMB > 2
           ? "กำลังอ่านไฟล์ PDF และวิเคราะห์รูปภาพ… ไฟล์ขนาดใหญ่อาจใช้เวลา 1-2 นาที"
           : "กำลังอ่านข้อมูลจากไฟล์ PDF..."
       );
     }
 
-    if (!file) return;
+    //ช่วงนี้คือ ส่งไฟล์ PDF ไปให้ backend อ่านข้อความ แล้วเอาผลลัพธ์มาใช้ต่อ ต่อจากโค้ดช่วงก่อนหน้า
+
+    if (!file) return; // ถ้าไม่มีไฟล์ (เช่น ผู้ใช้กดยกเลิก) หยุดตรงนี้
 
     try {
+      // แพ็กไฟล์ใส่ FormData (รูปแบบที่ใช้ส่งไฟล์ผ่าน HTTP) โดยตั้งชื่อฟิลด์ว่า "pdf"
       const fd = new FormData(); fd.append("pdf", file);
+
+      // ส่งไฟล์ไปที่ API /pdf/extract พร้อม header ยืนยันตัวตน
       const raw = await apiFetch<unknown>("/pdf/extract", { method: "POST", auth: authHeader, body: fd });
+
+      // ตรวจว่าข้อมูลที่ได้กลับมามีรูปแบบถูกต้องตาม PdfExtractSchema
       const json = parseApi(PdfExtractSchema, raw, "pdf extract");
-      setPdfText(json.text);
-      resetQuiz();
-      await ensureTopics();
-    } catch (e) {
-      handleApiError(e);
-    } finally {
+
+      setPdfText(json.text); // เก็บข้อความที่อ่านได้จาก PDF
+      resetQuiz(); // ล้างแบบทดสอบของไฟล์เก่า
+      await ensureTopics(); // เตรียมหัวข้อของเนื้อหา
+    }
+    catch (e) {
+      handleApiError(e);  // ถ้าผิดพลาดตรงไหนก็ตามในบล็อก try ส่งไปจัดการ error รวม
+    }
+    finally {
       setLoading(false);
       setLoadingText(""); // 🟢 ปิด Loading Overlay
     }
+
   };
 
   // 🟢 Helper: Update History Item Locally
@@ -449,13 +466,14 @@ export default function Home() {
   }, [currentUser, handleNewSession]);
 
   const summarize = async () => {
-    if (!context) return;
-    // ตรวจสิทธิ์ก่อนเปลี่ยนหน้า ถ้ายังไม่ได้เข้าสู่ระบบให้อยู่หน้าเดิม
-    // จะได้ไม่ค้างอยู่หน้าทำงานที่ว่างเปล่าหลังปิด popup
-    if (!canUseProtectedApi(!!currentUser)) { setLoginRequired(true); return; }
 
-    setIsLanding(false);
-    if (!pdf) { setFileId("manual"); firstLoadRef.current = true; await loadNote("manual"); }
+    if (!context) return; // ไม่มีเนื้อหาให้สรุป (ไม่ได้พิมพ์อะไร และไม่ได้อัปโหลด PDF) จะไม่ต้องทำอะไร
+
+    if (!canUseProtectedApi(!!currentUser)) { setLoginRequired(true); return; } // ต้องล็อกอินก่อนถึงจะสรุปได้ ถ้ายังไม่ล็อกอิน จะเปิด popup ชวนล็อกอิน แล้วหยุดตรงนี้
+
+    setIsLanding(false);// ออกจากหน้าแรก ไปหน้าทำงาน
+
+    if (!pdf) { setFileId("manual"); firstLoadRef.current = true; await loadNote("manual"); } // กรณีผู้ใช้พิมพ์ข้อความเอง (ไม่ได้อัปโหลด PDF) ตั้งชื่อไฟล์ว่า "manual"
 
     const isUpdating = !!currentHistoryId;
     const prevQuestions = quiz.questions;
@@ -464,69 +482,86 @@ export default function Home() {
     const prevLockedCount = quiz.lockedCount;
 
     setLoading(true);
-    const parts = Math.ceil(context.length / 12000);
+
+    const parts = Math.ceil(context.length / 12000); //parts = จำนวนตัวอักษรทั้งหมด / 12000 
+
     setLoadingText(
       parts > 1
         ? `กำลังวิเคราะห์เนื้อหา ${parts} ส่วน… เอกสารยาวอาจใช้เวลาสักครู่`
         : "กำลังวิเคราะห์และสรุปเนื้อหา"
     );
+    //ล้างของเก่าออกเสมอกัน error เพื่อที่จะเขียนสรุปขึ้นมาใหม่
     setError(null);
-    setOverview("");
-    setKeyPoints([]);
-    setSections([]);
-    setDataPoints([]);
+    setOverview("");     // ล้างภาพรวมเดิม
+    setKeyPoints([]);    // ล้างประเด็นสำคัญเดิม
+    setSections([]);     // ล้างหัวข้อย่อยเดิม
+    setDataPoints([]);   // ล้างตัวเลข/ข้อมูลสำคัญเดิม
 
+    //ถ้าเป็นแชทใหม่ ล้างแบบทดสอบ และ Qa ด้วย
     if (!isUpdating) {
       resetQuiz();
       resetQA();
     }
 
     try {
-      const raw = await apiFetch<unknown>("/summarize", {
+      const raw = await apiFetch<unknown>("/summarize", {  //ส่งเนื้อหาทั้งหมดไปให้ backend สรุป
         method: "POST",
         auth: authHeader,
-        json: { context },
+        json: { context }, //ส่งแบบ JSON
       });
-      const data = parseApi(SummarizeResponseSchema, raw, "summarize");
-      setOverview(typeof data.overview === "string" ? data.overview : "");
-      setKeyPoints(Array.isArray(data.key_points) ? data.key_points.filter((x): x is string => typeof x === "string") : []);
-      setSections(Array.isArray(data.sections) ? (data.sections.filter((x): x is Section => !!x && typeof x === "object") as Section[]) : []);
-      setDataPoints(Array.isArray(data.data_points) ? (data.data_points.filter((x): x is DataPoint => !!x && typeof x === "object") as DataPoint[]) : []);
-      await ensureTopics();
+      //Ex
+      //POST http://localhost:8000/summarize
+      //Authorization: Bearer <บัตรล็อกอิน>
+      //{"context": "[หน้า 1] เซลล์...[หน้า 2] ..."}
 
-      if (canUseProtectedApi(!!currentUser)) {
+      const data = parseApi(SummarizeResponseSchema, raw, "summarize");  // parseApi ตรวจรูปแบบคำตอบมีครบ 4 ช่อง (schemas/api.ts:14)
+
+      // เอาผลแต่ละส่วนไปใส่ไว้ในหน้าจอ (คัดเฉพาะของที่ชนิดถูกต้องอีกรอบ)
+      setOverview(typeof data.overview === "string" ? data.overview : ""); // ภาพรวม: ต้องเป็นข้อความ
+      setKeyPoints(Array.isArray(data.key_points) ? data.key_points.filter((x): x is string => typeof x === "string") : []); // ประเด็นสำคัญ: เก็บเฉพาะที่เป็นข้อความ
+      setSections(Array.isArray(data.sections) ? (data.sections.filter((x): x is Section => !!x && typeof x === "object") as Section[]) : []); // หัวข้อย่อย: เก็บเฉพาะที่เป็นกล่อง {...}
+      setDataPoints(Array.isArray(data.data_points) ? (data.data_points.filter((x): x is DataPoint => !!x && typeof x === "object") as DataPoint[]) : []); // ตัวเลขสำคัญ: เก็บเฉพาะที่เป็นกล่อง {...}
+
+      await ensureTopics(); // ขอ "รายชื่อหัวข้อ" จาก AI เก็บไว้ใช้ตอนสร้างข้อสอบ
+
+
+      // การบันทึกผลสรุปลงประวัติ (histories ใน Firestore) แยกเป็น 2 ทาง คือแชทใหม่ หรือแชทที่เคยบันทึกไว้แล้ว
+      if (canUseProtectedApi(!!currentUser)) {       // บันทึกได้เฉพาะตอนล็อกอินอยู่
+
+        // แพ็กข้อมูลทั้งหมดที่จะบันทึก
         const payload = buildHistoryPayload({
-          pdf,
-          currentHistoryId,
-          historyItems,
-          fileId,
-          overview: typeof data.overview === "string" ? data.overview : "",
-          keyPoints: Array.isArray(data.key_points) ? data.key_points : [],
-          sections: Array.isArray(data.sections) ? data.sections : [],
-          dataPoints: Array.isArray(data.data_points) ? data.data_points : [],
-          questions: isUpdating ? prevQuestions : [],
-          answers: isUpdating ? prevAnswers : {},
-          score: isUpdating ? (prevScore ?? -1) : -1,
-          content: context,
-          qaHistory: qaHistory,
+          pdf, currentHistoryId, historyItems, fileId, // ใช้ตั้งชื่อรายการในประวัติ
+          overview: typeof data.overview === "string" ? data.overview : "",    // ผลสรุปที่เพิ่งได้
+          keyPoints: Array.isArray(data.key_points) ? data.key_points : [],    // ผลสรุปที่เพิ่งได้
+          sections: Array.isArray(data.sections) ? data.sections : [],         // ผลสรุปที่เพิ่งได้
+          dataPoints: Array.isArray(data.data_points) ? data.data_points : [], // ผลสรุปที่เพิ่งได้
+
+          questions: isUpdating ? prevQuestions : [],  // ถ้าเป็นแชทเดิม ใช้ข้อสอบที่มีอยู่ ถ้าเป็นแชทใหม่ ใช้รายการว่าง []
+          answers: isUpdating ? prevAnswers : {},      // แชทเดิมจะเก็บคำตอบที่เคยเลือก ถ้าเป็นแชทใมห่ จะบันทึกว่าง {}
+          score: isUpdating ? (prevScore ?? -1) : -1,  // คะแนนที่ได้ (-1 = ยังไม่ได้ส่งคำตอบหรือไม่เคยทำ)
+          content: context,                            // เก็บเนื้อหา                  
+          qaHistory: qaHistory,                        // แชทถามตอบ
         });
+
+        // ถ้าแชทนี้เคยบันทึกแล้ว จะ อัปเดตของเดิม
         if (currentHistoryId) {
           await saveHistory.mutateAsync({ currentHistoryId, payload });
-          updateLocalHistoryItem({ ...payload, lockedCount: prevLockedCount });
-        } else {
+          updateLocalHistoryItem({ ...payload, lockedCount: prevLockedCount });  // แก้รายการในแถบประวัติทันที
+        } else { //ถ้าไม่ สร้างรายการใหม่ แล้วได้ ID กลับมา
           const saved = await saveHistory.mutateAsync({ currentHistoryId: null, payload });
+
           if (saved?.id) {
-            setCurrentHistoryId(saved.id);
-            await autosaveNote(saved.id, note);
+            setCurrentHistoryId(saved.id);       // จำ ID ไว้ ครั้งหน้ากดสรุปจะกลายเป็นการอัปเดต
+            await autosaveNote(saved.id, note);  // ย้ายโน้ตไปไว้ในสมุดเล่มใหม่ตาม ID
             setFileId(saved.id);
           }
         }
       }
     } catch (e) {
-      handleApiError(e);
+      handleApiError(e); // มีปัญหาตรงไหนก็ตาม จะ แสดง error (ถ้าเป็น 401 จะเปิดหน้าต่างล็อกอิน)
     } finally {
-      setLoading(false);
-      setLoadingText(""); // 🟢 ปิด Loading Overlay
+      setLoading(false); // ไม่ว่าสำเร็จหรือพัง จะ ปิดหน้าจอกำลังโหลดเสมอ
+      setLoadingText("");
     }
   };
 
@@ -671,17 +706,22 @@ export default function Home() {
                 />
 
                 <div className="flex justify-between items-center mt-2">
+
                   <div className="flex gap-2">
+                    {/* ปุ่มอัปโหลด PDF เมื่อเลือกไฟล์จะเรียก uploadPdf */}
                     <PdfUploader onUpload={uploadPdf} />
                   </div>
+
+                  {/* ฝั่งขวา: ปุ่มส่งข้อความเพื่อสรุป */}
                   <button
-                    onClick={summarize}
-                    disabled={!text.trim()}
+                    onClick={summarize} // กดแล้วเรียกฟังก์ชันสรุป
+                    disabled={!text.trim()} // ปิดปุ่มถ้าช่องข้อความว่าง (หรือมีแต่ช่องว่าง)
                     className="bg-white text-black p-3 rounded-full hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                   </button>
                 </div>
+
               </div>
             </div>
           ) : (

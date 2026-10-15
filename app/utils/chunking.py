@@ -18,39 +18,48 @@ MAX_SEMANTIC_GROUPS = 8
 # ความยาวตัวอย่างเนื้อหาที่ใช้ทำ "สารบัญ" ให้ AI เลือกก้อน
 INDEX_PREVIEW_CHARS = 400
 
+# แม่แบบสำหรับหาป้าย "[หน้า 5]" ในข้อความ
+# (\d+) = ส่วนตัวเลข ซึ่งเป็นส่วนที่เราอยากได้
 _PAGE_RE = re.compile(r"\[หน้า\s*(\d+)\]")
 
 
+"""
+split_by_pages(text: str)
+เข้า:   "[หน้า 1]\nเซลล์...\n\n[หน้า 2]\nหัวใจ...\n\n[หน้า 3]\nปอด..."
+        (ข้อความก้อนเดียว มีป้ายคั่นแต่ละหน้า)
+ออก:    [(1, "เซลล์..."), (2, "หัวใจ..."), (3, "ปอด...")]
+        (แยกเป็นรายการ แต่ละอันคือ (เลขหน้า, เนื้อหา))
+"""
 def split_by_pages(text: str) -> List[Tuple[int, str]]:
-    """แยกข้อความออกเป็นรายหน้า โดยอาศัยป้าย [หน้า X] ที่ pdf.py ใส่ไว้
-    คืนค่า [(เลขหน้า, เนื้อหาหน้านั้น), ...]
-    ถ้าไม่มีป้ายเลย (เช่นผู้ใช้พิมพ์เอง) จะคืนเป็นหน้าเดียว
-    """
     t = (text or "").strip()
     if not t:
         return []
 
-    matches = list(_PAGE_RE.finditer(t))
+    matches = list(_PAGE_RE.finditer(t)) # หาป้าย [หน้า X] ทุกตัวในข้อความ
+
+    # ไม่เจอป้ายเลย (เช่นผู้ใช้พิมพ์ข้อความเองแทนการอัปโหลด PDF)  จะนับทั้งก้อนเป็นหน้า 1
     if not matches:
         return [(1, t)]
 
     pages: List[Tuple[int, str]] = []
+
     # ถ้ามีข้อความก่อนป้ายแรก ให้ผูกไว้กับหน้าแรก
     if matches[0].start() > 0:
         lead = t[: matches[0].start()].strip()
         if lead:
             pages.append((0, lead))
 
+    # ไล่ทีละป้าย: เนื้อหาของหน้านี้ = ตั้งแต่หลังป้ายนี้ จนถึงก่อนป้ายถัดไป
     for i, m in enumerate(matches):
-        page_no = int(m.group(1))
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(t)
+        page_no = int(m.group(1)) # เลขหน้าจากป้าย
+        start = m.end()           # จุดเริ่ม = ท้ายป้าย
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(t) # จุดจบ = หัวป้ายถัดไป ถ้าเป็นป้ายสุดท้ายก็ไปจนสุดข้อความ
         body = t[start:end].strip()
-        if body:
-            pages.append((page_no, body))
+        if body:    
+            pages.append((page_no, body)) # ถ้าหน้าว่างก็ไม่เก็บ
     return pages
 
-
+#  เป็นแผนสำรองสำหรับแบ่งหน้า ตัวอย่าง: เอกสาร 10 หน้า (หน้าละสั้นๆ) ["หน้า 1-4", "หน้า 5-8", "หน้า 9-10"]   = 3 ก้อน = ถาม AI 3 ครั้ง
 def build_chunks(
     text: str,
     max_chars: int = CHUNK_CHAR_SIZE,
@@ -72,21 +81,27 @@ def build_chunks(
     buf_len = 0
     buf_pages = 0
 
+    # ไล่ทีละหน้า ตั้งแต่หน้าแรกถึงหน้าสุดท้าย
     for page_no, body in pages:
-        piece = f"[หน้า {page_no}]\n{body}" if page_no > 0 else body
-        piece_len = len(piece)
 
-        # ปิดก้อนเดิมเมื่อเกินโควตาตัวอักษร หรือเกินจำนวนหน้าที่กำหนด
-        too_long = buf_len + piece_len > max_chars
-        too_many_pages = buf_pages >= max_pages
-        if buf and (too_long or too_many_pages):
+        # แปะป้ายเลขหน้ากลับเข้าไป  ยกเว้น "หน้า 0" (ข้อความที่อยู่ก่อนป้ายแรก) ซึ่งใส่เนื้อหาไปเลยโดยไม่มีป้าย
+        piece = f"[หน้า {page_no}]\n{body}" if page_no > 0 else body
+        piece_len = len(piece)  # หน้านี้ยาวกี่ตัวอักษร
+
+        # เช็กว่าตะกร้าจะเต็มไหม:
+        too_long = buf_len + piece_len > max_chars      # ใส่หน้านี้แล้วเกิน 12,000 ตัวอักษร?
+        too_many_pages = buf_pages >= max_pages         # ในตะกร้ามีครบ 4 หน้าแล้ว?
+
+        if buf and (too_long or too_many_pages):        # ถ้าตะกร้ามีของอยู่และเต็มแล้ว จะ ปิดเป็น 1 ก้อน แล้วเริ่มตะกร้าใหม่
             chunks.append("\n\n".join(buf))
             buf, buf_len, buf_pages = [], 0, 0
 
+        # ใส่หน้านี้ลงตะกร้า และอัปเดตตัวนับ
         buf.append(piece)
         buf_len += piece_len
         buf_pages += 1
 
+    # หมดทุกหน้าแล้ว ถ้ายังมีของค้างในตะกร้า จะ ปิดเป็นก้อนสุดท้าย
     if buf:
         chunks.append("\n\n".join(buf))
     return chunks
@@ -164,34 +179,56 @@ _TOPIC_CACHE_LIMIT = 20
 def _cache_key(text: str) -> str:
     return hashlib.md5(text.encode("utf-8", errors="ignore")).hexdigest()
 
-
+#ทำ "สารบัญย่อ" ให้ AI ดู โดยเอาแค่ตัวหนังสือช่วงต้นของแต่ละหน้ามา หน้าละ 1 บรรทัด 
+""" จะได้แบบนี้
+[
+  (1, "บทที่ 1 เซลล์\n\nเซลล์คือหน่วยที่เล็กที่สุด......(ยาว 2,000 ตัว)"),
+  (2, "ส่วนประกอบของเซลล์   ได้แก่ นิวเคลียส......"),
+  (3, "บทที่ 2 หัวใจ\nหัวใจมี 4 ห้อง......"),
+]
+"""
 def build_page_index(pages: List[Tuple[int, str]]) -> str:
-    """สร้างสารบัญย่อ หน้าละ 1 บรรทัด สำหรับให้ AI ดูว่าเรื่องเปลี่ยนตรงไหน"""
     lines = []
+    # ไล่ทีละหน้า
     for page_no, body in pages:
+
+        # รวบช่องว่างกับการขึ้นบรรทัดใหม่ทั้งหมดให้เหลือเว้นวรรคเดียว แล้วตัดเอาแค่ 160 ตัวอักษรแรกของหน้า
         preview = " ".join(body.split())[:TOPIC_PREVIEW_CHARS]
+
+        # เขียนเป็นบรรทัดแบบ "หน้า 3: ข้อความต้นหน้า..."
         lines.append(f"หน้า {page_no}: {preview}")
     return "\n".join(lines)
 
-
+#แปลงคำตอบ AI (ตัวหนังสือ) ให้เป็นช่วงหน้าที่โปรแกรมใช้ได้ และซ่อมถ้า AI ตอบผิด
 def _parse_groups(raw: str, valid_pages: List[int]) -> Optional[List[Tuple[int, int]]]:
     """แปลงคำตอบ AI เช่น '1-6, 7-11, 12-17' เป็นช่วงหน้า พร้อมตรวจความถูกต้อง"""
+
+    # AI ไม่ตอบอะไรเลย = ใช้ไม่ได้
     if not raw:
         return None
-    pairs = re.findall(r"(\d+)\s*[-–]\s*(\d+)", raw)
-    if not pairs:
-        return None
 
-    lo_all, hi_all = min(valid_pages), max(valid_pages)
-    groups: List[Tuple[int, int]] = []
+    # หาคู่ตัวเลขที่เขียนแบบ "ตัวเลข-ตัวเลข" ในคำตอบ "คำตอบคือ 1-6, 7-11 ครับ" → [("1","6"), ("7","11")]  (คำพูดอื่นถูกทิ้งไป)
+    pairs = re.findall(r"(\d+)\s*[-–]\s*(\d+)", raw)
+
+    # ถ้าไม่เจอตัวเลขสักคู่ = ใช้ไม่ได้
+    if not pairs:  
+        return None  
+
+    lo_all, hi_all = min(valid_pages), max(valid_pages)  # หน้าแรก  (lo มาจาก low = ต่ำสุด),หน้าสุดท้าย (hi มาจาก high = สูงสุด)
+
+    groups: List[Tuple[int, int]] = [] #Ex groups = [(1, 6), (7, 14), (15, 20)]
+
     for a, b in pairs:
-        start, end = int(a), int(b)
-        if start > end:
+        start, end = int(a), int(b)         # เปลี่ยนตัวหนังสือ "6" เป็นตัวเลข 6
+
+        if start > end:                     # ถ้า AI เขียนกลับด้าน เช่น 10-7 จะแก้เป็น 7-10
             start, end = end, start
+
         # ตัดให้อยู่ในช่วงหน้าที่มีจริง
-        start = max(start, lo_all)
-        end = min(end, hi_all)
-        if start <= end:
+        start = max(start, lo_all)          # ต่ำกว่าหน้าแรก จะ ให้ขึ้นเป็นหน้าแรก
+        end = min(end, hi_all)              # เกินหน้าสุดท้าย จะ ตัดเหลือหน้าสุดท้าย
+
+        if start <= end:                    # ถ้าช่วงที่ยังสมเหตุสมผลถึงจะเก็บไว้
             groups.append((start, end))
 
     if not groups:
@@ -217,11 +254,15 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
     """ให้ AI ดูสารบัญย่อ แล้วบอกว่าหน้าไหนถึงหน้าไหนเป็นเรื่องเดียวกัน
     คืน None ถ้าทำไม่ได้ (ผู้เรียกต้อง fallback ไปใช้การแบ่งตามจำนวนหน้า)
     """
-    pages = split_by_pages(text)
+    pages = split_by_pages(text) # หั่นข้อความกลับเป็นรายหน้า → [(1, "..."), (2, "..."), ...]
     if len(pages) < 3:
         return None       # หน้าน้อยเกินกว่าจะต้องแบ่งตามเรื่อง
 
-    key = _cache_key(text)
+    key = _cache_key(text) # ตั้งชื่อให้เอกสารนี้ เอาไว้จำว่าเคยเจอเอกสารนี้หรือยัง
+
+    # เปิดสมุดจดดูว่าเคยแบ่งเรื่องของเอกสารนี้ไปแล้วหรือยัง
+    # ถ้าเคยแล้ว ก็เอาผลที่จดไว้มาใช้เลย ไม่ต้องเสียเวลาและเงินถาม AI ซ้ำ
+    # (เช่น กด "สรุป" ไปแล้ว พอกด "ออกข้อสอบ" ด้วยไฟล์เดิมก็ใช้ผลเดิมได้ทันที)
     if key in _TOPIC_CACHE:
         print(f"[TIME] {'chunk: topic (cache)':<22} {0.0:7.2f}s | ใช้ผลเดิม", flush=True)
         return _TOPIC_CACHE[key]
@@ -249,32 +290,45 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
 
 ตอบ (ช่วงหน้าเท่านั้น):
 """
+        # ส่งคำถาม (prompt ที่มีสารบัญย่อ) ไปให้ AI
         r = client.chat.completions.create(
             model=settings.AI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
+            messages=[{"role": "user", "content": prompt}],  # ข้อความที่ส่งไปถาม
+            temperature=0, # ให้ AI ตอบแบบเดิมทุกครั้ง ไม่ด้นสด
         )
-        raw = (r.choices[0].message.content or "").strip()
-        groups = _parse_groups(raw, [p for p, _ in pages])
-    except Exception:
+        raw = (r.choices[0].message.content or "").strip()  # หยิบคำตอบของ AI ออกมา ถ้าไม่มีคำตอบก็ใช้ "" แทน แล้วตัดช่องว่างหัวท้ายทิ้ง
+        groups = _parse_groups(raw, [p for p, _ in pages]) # แปลงคำตอบที่เป็นตัวหนังสือ ให้เป็นช่วงหน้าที่โปรแกรมใช้งานได้ (และซ่อมถ้า AI ตอบผิด)
+
+    except Exception: # ถ้าเกิดปัญหาระหว่างทางระบบจะไปหั่นตามความยาวแทน
         return None
 
     if not groups:
         return None
 
-    # ถ้าซอยละเอียดเกินไป ให้รวมกลุ่มเล็กที่ติดกันเข้าด้วยกัน
+    # ถ้า AI แบ่งออกมาเกิน 8 กลุ่ม ให้รวมกลุ่มที่เล็กที่สุดเข้ากับกลุ่มข้างๆ
+    # ทำซ้ำไปเรื่อยๆ จนเหลือไม่เกิน 8 กลุ่ม (1 กลุ่ม = ถาม AI 1 ครั้ง กลุ่มเยอะ = ช้าและแพง)
     while len(groups) > MAX_SEMANTIC_GROUPS:
-        sizes = [(g[1] - g[0] + 1) for g in groups]
-        i = sizes.index(min(sizes))
-        j = i - 1 if i == len(groups) - 1 else i + 1
+
+        sizes = [(g[1] - g[0] + 1) for g in groups] # นับว่าแต่ละกลุ่มมีกี่หน้า เช่น (7, 9) = 3 หน้า
+
+        i = sizes.index(min(sizes)) # หาว่ากลุ่มไหนเล็กที่สุด (i = ลำดับของกลุ่มนั้น)
+
+        j = i - 1 if i == len(groups) - 1 else i + 1 # เลือกเพื่อนบ้านไว้รวมด้วย: ปกติใช้กลุ่มถัดไป แต่ถ้ากลุ่มที่เล็กสุดเป็นกลุ่มสุดท้าย ไม่มีกลุ่มถัดไปแล้ว ก็ใช้กลุ่มก่อนหน้าแทน
+
+        # ช่วงหน้าใหม่ = ตั้งแต่หน้าแรกของสองกลุ่ม ถึงหน้าสุดท้ายของสองกลุ่ม
         lo = min(groups[i][0], groups[j][0])
         hi = max(groups[i][1], groups[j][1])
+
+        # ใส่ช่วงใหม่ไว้ที่ตำแหน่งของกลุ่มที่อยู่ก่อน แล้วลบกลุ่มที่อยู่หลังทิ้ง
         groups[min(i, j)] = (lo, hi)
         groups.pop(max(i, j))
 
+    # ถ้าสมุดจดครบ 20 เอกสารแล้ว ล้างทิ้งทั้งเล่ม
     if len(_TOPIC_CACHE) >= _TOPIC_CACHE_LIMIT:
         _TOPIC_CACHE.clear()
     _TOPIC_CACHE[key] = groups
+
+    #เอาไว้ Check Log ไม่เกี่ยวกับการทำงาน
     print(f"[TIME] {'chunk: topic detect':<22} {_time.perf_counter()-_t0:7.2f}s "
           f"| {len(pages)} หน้า -> {len(groups)} กลุ่ม", flush=True)
     return groups
@@ -289,7 +343,9 @@ def build_chunks_semantic(
 
     max_pages_hard = เพดานกันเรื่องเดียวยาวเกินไปจนก้อนใหญ่เกิน AI อ่านไหว
     """
-    groups = detect_topic_groups(text)
+    groups = detect_topic_groups(text)  #ให้ AI ดูว่าหน้าไหนถึงหน้าไหนเป็นเรื่องเดียวกัน   Ex groups = [(1, 6), (7, 14), (15, 20)]
+    
+    #ถ้า AI แบ่งตามเรื่องไม่ได้ จะใช้แผนสำรอง หั่นตามความยาว/จำนวนหน้าแทน (โอกาสต่ำแต่ทำกันไว้เผื่อเจ๊ง)
     if not groups:
         return build_chunks(text, max_chars=max_chars)
 
@@ -298,24 +354,51 @@ def build_chunks_semantic(
     for page_no, body in pages:
         by_no[page_no] = body
 
-    chunks: List[str] = []
-    for start, end in groups:
-        buf: List[str] = []
-        buf_len = 0
-        buf_pages = 0
-        for p in range(start, end + 1):
-            body = by_no.get(p)
-            if body is None:
+    #เอาช่วงหน้าที่ได้จาก AI เช่น (1,6) ไปประกอบเป็น "ก้อนข้อความ" จริงๆ เพื่อส่งให้ AI สรุปหรือออกข้อสอบ
+    chunks: List[str] = [] # กล่องใหญ่ เก็บก้อนที่ทำเสร็จแล้ว 
+    """ สมมุติ   groups = [(1, 6), (7, 14), (15, 20)]   # เซลล์ / หัวใจ / ปอด    จะได้ข้อมูลประมาณนี้
+        chunks = [
+            # ก้อน 1 — เรื่องเซลล์ ทั้งเรื่อง
+            "[หน้า 1]\nเซลล์...\n\n[หน้า 2]\n...\n\n ... \n\n[หน้า 6]\n...",
+
+            # ก้อน 2 — เรื่องหัวใจ ส่วนแรก
+            "[หน้า 7]\nหัวใจ...\n\n[หน้า 8]\n...\n\n ... \n\n[หน้า 10]\n...",
+
+            # ก้อน 3 — เรื่องหัวใจ ส่วนหลัง (ซอยออกมาเพราะยาวเกิน)
+            "[หน้า 11]\n...\n\n ... \n\n[หน้า 14]\n...",
+
+            # ก้อน 4 — เรื่องปอด ทั้งเรื่อง
+            "[หน้า 15]\nปอด...\n\n ... \n\n[หน้า 20]\n...",
+        ]
+    """
+    # ไล่ทีละเรื่อง เช่น (1,6) แล้วต่อด้วย (7,14) ...
+    for start, end in groups:               # Ex groups = [(1, 6), (7, 14), (15, 20)]
+        buf: List[str] = []                 # ตะกร้าเปล่า ไว้ใส่หน้าของก้อนที่กำลังทำ
+        buf_len = 0                         # ในตะกร้ามีตัวอักษรแล้วกี่ตัว
+        buf_pages = 0                       # ในตะกร้ามีแล้วกี่หน้า
+
+        # ไล่ทีละหน้าในเรื่องนี้ (end + 1 เพราะ range ไม่นับตัวสุดท้าย)
+        for p in range(start, end + 1):     
+            body = by_no.get(p)             # หยิบเนื้อหาของหน้า p
+
+            if body is None:                # ถ้าหน้านี้ไม่มี (เช่นเป็นหน้าว่าง) จะ ข้าม
                 continue
-            piece = f"[หน้า {p}]\n{body}"
-            # เรื่องเดียวแต่ยาวมาก → ซอยย่อยภายในเรื่องนั้น
+
+            piece = f"[หน้า {p}]\n{body}"    # แปะป้ายเลขหน้ากลับเข้าไป
+
+            # ถ้าใส่หน้านี้แล้วตะกร้าจะล้น (เกิน 12,000 ตัวอักษร หรือมีครบ 10 หน้าแล้ว) จะ ปิดตะกร้าเดิมเป็น 1 ก้อน แล้วเริ่มตะกร้าใหม่
             if buf and (buf_len + len(piece) > max_chars or buf_pages >= max_pages_hard):
                 chunks.append("\n\n".join(buf))
                 buf, buf_len, buf_pages = [], 0, 0
-            buf.append(piece)
-            buf_len += len(piece)
+
+            # ใส่หน้านี้ลงตะกร้า และอัปเดตตัวนับ
+            buf.append(piece)               
+            buf_len += len(piece)           
             buf_pages += 1
+
+        # จบเรื่องนี้แล้ว ถ้าตะกร้ามีของ จะ ปิดเป็น 1 ก้อน (เรื่องใหม่จะเริ่มด้วยตะกร้าใหม่เสมอ สองเรื่องจึงไม่ปนกันในก้อนเดียว)
         if buf:
             chunks.append("\n\n".join(buf))
 
+    # ถ้าทำแล้วไม่ได้ก้อนเลย จะ ใช้แผนสำรอง หั่นตามความยาวแทน
     return chunks or build_chunks(text, max_chars=max_chars)

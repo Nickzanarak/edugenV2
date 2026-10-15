@@ -40,21 +40,27 @@ class SummarizeService:
     MAX_DP_LABEL_LEN = 40     # label ยาวกว่านี้ตัดแล้วใส่ …
     MAX_DP_UNIT_LEN = 15      # หน่วยจริงสั้นเสมอ (%, °C, องศาเซลเซียส, เมตรต่อวินาที)
 
+
+    #AI ชอบส่งของที่ไม่ใช่ตัวเลขมา การ์ดเลยดูพังหรือไม่มีประโยชน์ จึงต้องมีด่านกรองก่อนแสดง
     @staticmethod
     def _clean_data_points(dps) -> List[Dict[str, str]]:
         """กรองให้เหลือเฉพาะ 'ตัวเลข' ที่แสดงในการ์ดได้สวย
         กฎทั้งหมดเป็นกฎทั่วไป ใช้ได้กับเอกสารทุกสาขาวิชา ไม่ผูกกับเรื่องใดเรื่องหนึ่ง
         """
-        out: List[Dict[str, str]] = []
-        seen_labels = set()
+        out: List[Dict[str, str]] = [] # ตะกร้าเก็บตัวที่ผ่านการตรวจ
+        seen_labels = set()            # สมุดจดชื่อ (label) ที่เก็บไปแล้ว ไว้เช็กชื่อซ้ำ
 
-        for d in SummarizeService._norm_list(dps):
-            if not isinstance(d, dict):
+        
+        for d in SummarizeService._norm_list(dps):  # ไล่ทีละตัว (ถ้าที่ส่งมาไม่ใช่รายการ ใช้รายการว่างแทน)
+
+            if not isinstance(d, dict):             # ไม่ใช่กล่องข้อมูลแบบ {...} (เช่น AI ส่งมาเป็นข้อความเปล่าๆ) → ข้ามตัวนี้
                 continue
-            label = SummarizeService._norm_str(d.get("label", ""))
-            value = SummarizeService._norm_str(d.get("value", ""))
-            unit = SummarizeService._norm_str(d.get("unit", ""))
-            if not label or not value:
+
+            label = SummarizeService._norm_str(d.get("label", "")) # หยิบชื่อ (ถ้าไม่มีใช้ "") แล้วตัดช่องว่างหัวท้าย
+            value = SummarizeService._norm_str(d.get("value", "")) # หยิบค่า
+            unit = SummarizeService._norm_str(d.get("unit", ""))   # หยิบหน่วย
+
+            if not label or not value: # ไม่มีชื่อ หรือไม่มีค่า จะข้ามตัวนี้ (การ์ดต้องมีทั้งชื่อและตัวเลข)
                 continue
 
             # กฎ 1: ต้องขึ้นต้นด้วยตัวเลข — ส่วนนี้คือ "ตัวเลขสำคัญ"
@@ -67,31 +73,37 @@ class SummarizeService:
             if value.count(".") > 1:
                 continue
 
-            # กฎ 3: ค่ายาวเกินไป หรือเป็นรายการ = ไม่ใช่ตัวเลขเดี่ยว
+            # กฎ 3: ยาวไม่เกิน 24 ตัวอักษร และห้ามมีจุลภาค กันประโยคและรายการ
             if len(value) > SummarizeService.MAX_DP_VALUE_LEN:
                 continue
             if "," in value or ";" in value:
                 continue
 
-            # กฎ 4: label ซ้ำ เก็บอันแรกพอ (กันรายการซ้ำซากประเภทเดียวกัน)
-            key = " ".join(label.split()).lower()
-            if key in seen_labels:
-                continue
-            seen_labels.add(key)
+            # กฎ 4: ชื่อ ซ้ำ เก็บอันแรกพอ (กันรายการซ้ำซากประเภทเดียวกัน)
+            key = " ".join(label.split()).lower() # ทำชื่อให้เป็นแบบเดียวกันไว้ใช้เทียบ: เว้นวรรคซ้อนเหลือช่องเดียว + อังกฤษเป็นตัวพิมพ์เล็ก
 
-            if len(label) > SummarizeService.MAX_DP_LABEL_LEN:
+            if key in seen_labels: # ถ้าชื่อนี้อยู่ในสมุดแล้ว = ซ้ำ
+                continue           # ข้ามตัวนี้
+            seen_labels.add(key)   # ชื่อใหม่ จะจดลงสมุด
+
+            if len(label) > SummarizeService.MAX_DP_LABEL_LEN:  # ชื่อยาวเกิน 40 ตัวอักษร จะ ตัดให้สั้น แล้วต่อ "…" กันมันจะล้นกล่องหน้าเว็บ
                 label = label[: SummarizeService.MAX_DP_LABEL_LEN].rstrip() + "…"
 
             # กฎ 5: ถ้า value มีตัวอักษรอยู่แล้ว (เช่น "0.5 GiB") แปลว่ามีหน่วยในตัว
             # ไม่ต้องต่อ unit เข้าไปอีก ไม่งั้นได้ "0.5 GiBmemory"
-            has_letters = any(c.isalpha() for c in value)
-            if has_letters or len(unit) > SummarizeService.MAX_DP_UNIT_LEN:
+            has_letters = any(c.isalpha() for c in value) # ไล่ดูทุกตัวอักษรในค่า มีตัวหนังสือปนอยู่ไหม (ไทยหรืออังกฤษก็ได้)
+
+            if has_letters or len(unit) > SummarizeService.MAX_DP_UNIT_LEN: # มีหน่วยในค่าแล้ว หรือหน่วยยาวเกิน 15 ตัว จะ ไม่ใช้หน่วยแยก
                 unit = ""
 
-            item: Dict[str, str] = {"label": label, "value": value}
-            if unit:
-                item["unit"] = unit
-            out.append(item)
+            # แพ็กใส่ตะกร้า
+            item: Dict[str, str] = {"label": label, "value": value} # ชื่อ กับ ค่า
+
+            if unit:                    #ถ้ามีหน่วย
+                item["unit"] = unit     #เขียนเพิ่มลงไปในตะกร้า
+
+            out.append(item)  #เอา item (ตัวเลข) ไปใส่ต่อท้ายได้ อันนี้คือผ่านทุกด่านแล้ว      
+
         return out
 
     # ---------------- MAP: สรุปทีละก้อน ----------------
@@ -147,57 +159,70 @@ class SummarizeService:
 {chunk}
 """
         try:
+
+            # ถาม AI 1 ครั้ง: สรุปก้อนนี้ ได้ครบทั้ง 3 อย่างในรอบเดียว
             r = client.chat.completions.create(
                 model=AI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt}],  # คำสั่ง + เนื้อหาของก้อนนี้
                 temperature=0.15,
                 response_format={"type": "json_object"},
             )
+
+            # แปลงคำตอบเป็นข้อมูล ถ้าแปลงไม่ได้ ใช้ค่าว่างทั้ง 3 ช่อง
             data = safe_json_loads(
                 r.choices[0].message.content,
                 {"sections": [], "key_points": [], "data_points": []},
             )
+
+            # ทำความสะอาดทั้ง 3 ส่วนก่อนส่งกลับ
             return {
-                "sections": SummarizeService._clean_sections(data.get("sections", [])),
+                "sections": SummarizeService._clean_sections(data.get("sections", [])),           # คัดเฉพาะหัวข้อที่มีทั้งชื่อและเนื้อหา
                 "key_points": [
-                    SummarizeService._norm_str(k)
-                    for k in SummarizeService._norm_list(data.get("key_points", []))
-                    if SummarizeService._norm_str(k)
+                    SummarizeService._norm_str(k) # ตัดช่องว่างหัวท้าย
+                    for k in SummarizeService._norm_list(data.get("key_points", [])) # ไล่ทีละข้อ
+                    if SummarizeService._norm_str(k) # ถ้าข้อไหนว่าง ทิ้ง
                 ],
-                "data_points": SummarizeService._clean_data_points(data.get("data_points", [])),
+                "data_points": SummarizeService._clean_data_points(data.get("data_points", [])),  # คัดเฉพาะตัวเลขที่แสดงบนการ์ดได้
             }
+
         except Exception as e:
             # ก้อนเดียวพัง ไม่ให้ล้มทั้งไฟล์ — แต่ต้องพิมพ์ error ออกมา ไม่งั้นหาสาเหตุไม่เจอ
-            print(f"[ERROR] map chunk {idx}/{total} ล้มเหลว: {type(e).__name__}: {e}", flush=True)
-            return {"sections": [], "key_points": [], "data_points": []}
+            print(f"[ERROR] map chunk {idx}/{total} ล้มเหลว: {type(e).__name__}: {e}", flush=True) # พิมพ์ลง log ว่าก้อนไหนพัง และพังเพราะอะไร จะได้ตามหาสาเหตุได้
+            return {"sections": [], "key_points": [], "data_points": []} # ส่งผลว่างกลับไป ให้ก้อนอื่นทำงานต่อได้
 
     # ---------------- REDUCE: รวมสรุปย่อย ----------------
     @staticmethod
     def _reduce(parts: List[Dict[str, Any]], total_chunks: int) -> Dict[str, Any]:
         """รวมสรุปย่อยทุกก้อน — เน้นจัดระเบียบ ไม่ใช่ย่อซ้ำ"""
-        all_sections: List[Dict[str, str]] = []
-        all_keys: List[str] = []
-        all_dps: List[Dict[str, str]] = []
+
+        all_sections: List[Dict[str, str]] = [] # เก็บหัวข้อ
+        all_keys: List[str] = []                # เก็บประเด็นสำคัญ
+        all_dps: List[Dict[str, str]] = []      # เก็บตัวเลขสำคัญ
+
+        # ไล่ดูผลทีละก้อน แล้วเทของแต่ละอย่างลงกองของมัน
         for p in parts:
             all_sections.extend(p.get("sections", []))
             all_keys.extend(p.get("key_points", []))
             all_dps.extend(p.get("data_points", []))
 
+        # แปลง กองหัวข้อ + กองประเด็นสำคัญ เป็นตัวหนังสือ JSON เพื่อเอาไปแปะลงใน prompt
         merged_input = json.dumps(
             {"sections": all_sections, "key_points": all_keys},
-            ensure_ascii=False,
+            ensure_ascii=False, # ให้ภาษาไทยเป็นตัวอ่านออก
         )
+
         # ส่ง data_points ดิบทั้งหมดให้ AI คัดเลือก (ตอนนี้ AI เห็นภาพรวมทั้งไฟล์แล้ว)
         dps_input = json.dumps(all_dps, ensure_ascii=False)
 
         # ปริมาณผลลัพธ์แปรผันตามความยาวเอกสาร
         # UI แสดงแบบพับเก็บได้ จึงเพิ่มจำนวนหัวข้อให้ครอบคลุมทุกเรื่องในเอกสารได้
-        target_sections = max(6, min(16, total_chunks * 2))
-        overview_sentences = max(3, min(6, total_chunks + 1))
-        target_keys = max(6, min(12, target_sections + 2))
-        target_dps = max(8, min(24, total_chunks * 3))
-        topic_count = len(all_sections)
-        min_sections = max(4, min(target_sections, int(topic_count * 0.4)))
+        target_sections = max(6, min(16, total_chunks * 2)) # เป้าจำนวนหัวข้อ: ก้อนละ 2 หัวข้อ (อย่างน้อย 6, ไม่เกิน 16)
+        overview_sentences = max(3, min(6, total_chunks + 1)) # ภาพรวมยาวกี่ประโยค: จำนวนก้อน + 1 (อย่างน้อย 3, ไม่เกิน 6)
+        target_keys = max(6, min(12, target_sections + 2)) # เป้าประเด็นสำคัญ: จำนวนหัวข้อ + 2 (อย่างน้อย 6, ไม่เกิน 12)
+        target_dps = max(8, min(24, total_chunks * 3))# ตัวเลขเด่นสูงสุด: ก้อนละ 3 ตัว (อย่างน้อย 8, ไม่เกิน 24)
+
+        topic_count = len(all_sections) # ทุกก้อนรวมกันได้หัวข้อดิบกี่หัวข้อ
+        min_sections = max(4, min(target_sections, int(topic_count * 0.4))) # หัวข้อขั้นต่ำ: 40% ของหัวข้อดิบ (กัน AI ยุบจนเรื่องหาย)
 
         prompt = f"""
 ด้านล่างคือบทสรุปย่อยจากเอกสารฉบับเดียวกันที่ถูกแบ่งอ่านเป็น {total_chunks} ส่วน
@@ -288,29 +313,37 @@ unit ต้องเป็น "หน่วยจริง" สั้น ๆ เ
 {dps_input}
 """
         try:
+
+            # ถาม AI: รวมผลของทุกก้อนเป็นสรุปฉบับสุดท้าย
             r = client.chat.completions.create(
                 model=AI_MODEL,
                 messages=[
-                    {"role": "system", "content": "คุณรวบรวมบทสรุปโดยไม่ทำข้อมูลตกหล่น"},
-                    {"role": "user", "content": prompt},
+                    {"role": "system", "content": "คุณรวบรวมบทสรุปโดยไม่ทำข้อมูลตกหล่น"}, # กฎประจำตัว: ห้ามทำข้อมูลตกหล่น
+                    {"role": "user", "content": prompt}, # สรุปย่อยทุกก้อน + ตัวเลขจากทุกก้อน + ความยาวที่ต้องการ
                 ],
                 temperature=0.15,
                 response_format={"type": "json_object"},
             )
+
+            # แปลงคำตอบเป็นข้อมูล ถ้าแปลงไม่ได้ใช้ค่าว่าง
             data = safe_json_loads(
                 r.choices[0].message.content,
                 {"overview": "", "key_points": [], "sections": []},
             )
-            sections = SummarizeService._clean_sections(data.get("sections", []))
-            picked_dps = SummarizeService._clean_data_points(data.get("data_points", []))
+
+            # ทำความสะอาดคำตอบ (กติกาเดียวกับตอนสรุปแต่ละก้อน)
+            sections = SummarizeService._clean_sections(data.get("sections", []))           # คัดเฉพาะหัวข้อที่มีทั้งชื่อและเนื้อหา
+            picked_dps = SummarizeService._clean_data_points(data.get("data_points", []))   # ตัวเลขที่ AI คัดมา ผ่านการกรองอีกรอบ
             keys = [
-                SummarizeService._norm_str(k)
-                for k in SummarizeService._norm_list(data.get("key_points", []))
+                SummarizeService._norm_str(k) # ตัดช่องว่างหัวท้าย
+                for k in SummarizeService._norm_list(data.get("key_points", [])) # ทิ้งข้อที่ว่าง
                 if SummarizeService._norm_str(k)
             ]
+
         except Exception as e:
             print(f"[ERROR] reduce ล้มเหลว: {type(e).__name__}: {e}", flush=True)
-            # ถ้า reduce พัง ใช้ผลรวมดิบแทน ดีกว่าไม่ได้อะไรเลย
+
+            # ถ้า reduce พัง ใช้ผลรวมดิบแทน ดีกว่าไม่ได้อะไรเลย (กันแตก)
             sections, keys = all_sections, all_keys
             picked_dps = []
             data = {"overview": ""}
@@ -330,25 +363,31 @@ unit ต้องเป็น "หน่วยจริง" สั้น ๆ เ
             k = (d.get("label", ""), d.get("value", ""))
             if k not in seen:
                 seen.add(k)
-                uniq_dps.append(d)
+                uniq_dps.append(d)  
 
-        # ใช้ตัวที่ AI คัดมา ถ้าคัดไม่ได้ให้ใช้ของดิบแทน (กันหน้าว่าง)
+        # ตัวเลขเด่น: ใช้ตัวที่ AI คัดมา ถ้า AI ไม่ได้คัดมาเลย ให้ใช้ตัวเลขดิบ (ที่ตัดตัวซ้ำแล้ว) แทน  [:target_dps] = เอาแค่ N ตัวแรก ไม่ให้เกินเป้า
         final_dps = picked_dps[:target_dps] if picked_dps else uniq_dps[:target_dps]
 
         return {
-            "overview": SummarizeService._norm_str(data.get("overview", "")),
-            "key_points": keys[:max(10, total_chunks * 5)],
-            "sections": sections,
-            "data_points": final_dps,
+            "overview": SummarizeService._norm_str(data.get("overview", "")), # ภาพรวมจาก AI (ตัดช่องว่างหัวท้าย)
+            "key_points": keys[:max(10, total_chunks * 5)],                   # ประเด็นสำคัญ ไม่เกินเพดาน
+            "sections": sections,                                             # หัวข้อ (ผ่านด่านกันเนื้อหาหายมาแล้ว)
+            "data_points": final_dps,                                         # ตัวเลขเด่น
         }
+        #_reduce คืนค่า ผลลัพธ์ ใน summarize() แล้ว จดลง log ใน Firestore แล้ว ส่งกลับไปให้หน้าเว็บแสดงผล
 
     # ---------------- ทางเดิม: เอกสารสั้น ----------------
+    #_summarize_single — สรุปเอกสารสั้น (มีก้อนเดียว) ในรอบเดียว ใช้ตอนแบ่งเอกสารแล้วได้แค่ 1 ก้อน
     @staticmethod
     def _summarize_single(ctx: str) -> Dict[str, Any]:
-        sent_items = numbered_sentences(ctx, max_sentences=800)
+
+        sent_items = numbered_sentences(ctx, max_sentences=800) # หั่นเนื้อหาเป็นประโยค แล้วใส่เลขกำกับ (เก็บไม่เกิน 800 ประโยค) ได้ [{"id": 1, "text": "หัวใจมี 4 ห้อง"},{"id": 2, "text": "ห้องบนเรียกว่าเอเทรียม"}]
+
+        # หั่นแล้วไม่ได้ประโยคเลย → ไม่มีอะไรให้สรุป
         if not sent_items:
             raise HTTPException(422, "เอกสารสั้นเกินไป")
-        sent_block = "\n".join(f"[{it['id']}] {it['text']}" for it in sent_items)
+
+        sent_block = "\n".join(f"[{it['id']}] {it['text']}" for it in sent_items) # เรียงประโยคเป็นข้อๆ บรรทัดละประโยค เช่น "[1] หัวใจมี 4 ห้อง "
 
         prompt_sections = f"""
 คุณเป็นครูบรรณาธิการสรุปเอกสารแบบยึดตามข้อความเท่านั้น
@@ -359,14 +398,21 @@ unit ต้องเป็น "หน่วยจริง" สั้น ๆ เ
 รายการประโยค:
 {sent_block}
 """
+        # ถาม AI ครั้งที่ 1: ส่งรายการประโยคไป ให้ช่วยแบ่งเป็นหัวข้อ
         res1 = client.chat.completions.create(
             model=AI_MODEL,
-            messages=[{"role": "user", "content": prompt_sections}],
-            temperature=0.15,
-            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": prompt_sections}],  # ข้อความที่ส่งไป = คำสั่ง + รายการประโยค
+            temperature=0.15,                                         # ค่าต่ำ = ตอบนิ่งๆ ยึดเนื้อหา ไม่ด้นสด
+            response_format={"type": "json_object"},                  # บังคับให้ตอบกลับเป็น JSON เท่านั้น
         )
-        sec_json = safe_json_loads(res1.choices[0].message.content, {"sections": []})
-        sections = SummarizeService._clean_sections(sec_json.get("sections", []))
+
+        # คำตอบที่ได้ปกติ {"sections": [{...}, {...}]}
+        sec_json = safe_json_loads(res1.choices[0].message.content, {"sections": []}) # แปลงคำตอบของ AI (ตัวหนังสือ) ให้เป็นข้อมูลที่โปรแกรมใช้งานได้ ถ้าแปลงไม่ได้ (เช่น คำตอบขาดกลางคัน) ใช้ {"sections": []} แทน ระบบจะได้ไม่พัง
+
+        sections = SummarizeService._clean_sections(sec_json.get("sections", [])) # หยิบรายการหัวข้อจากคำตอบ (ถ้าไม่มีก็ใช้รายการว่าง) แล้วคัดเฉพาะหัวข้อที่สมบูรณ์  
+
+        #คำตอบสุดท้ายที่ได้หลังจาก AI ตอบกลับมา Ex sections = [{"title": "โครงสร้างหัวใจ", "summary": "หัวใจมี 4 ห้อง..."}, {"title": "หลอดเลือด", "summary": "..."},]
+
 
         prompt_overview = f"""
 คุณเป็นผู้ช่วยสรุประดับอาจารย์ ใช้เฉพาะข้อมูลจาก "รายการประโยค" และ "หัวข้อ" ด้านล่าง
@@ -384,18 +430,21 @@ overview ต้องกล่าวถึงทุกเรื่องหล�
 หัวข้อ:
 {json.dumps({"sections": sections}, ensure_ascii=False)}
 """
+        # ถาม AI ครั้งที่ 2: เขียนภาพรวม + ประเด็นสำคัญ + ตัวเลขเด่น
         res2 = client.chat.completions.create(
             model=AI_MODEL,
             messages=[
-                {"role": "system", "content": "คุณสรุปได้กระชับ ชัด และยึดข้อความต้นฉบับเท่านั้น"},
-                {"role": "user", "content": prompt_overview},
+                {"role": "system", "content": "คุณสรุปได้กระชับ ชัด และยึดข้อความต้นฉบับเท่านั้น"},   # system = กฎประจำตัวที่ AI ต้องยึดตลอดการตอบ
+                {"role": "user", "content": prompt_overview},                               # user = งานที่สั่งรอบนี้ (คำสั่ง + เนื้อหา + หัวข้อจากครั้งที่ 1)
             ],
-            temperature=0.15,
-            response_format={"type": "json_object"},
+            temperature=0.15,                                                               # ตอบนิ่งๆ ยึดเนื้อหา
+            response_format={"type": "json_object"},                                        # บังคับตอบเป็น JSON
         )
+
+        # แปลงคำตอบครั้งที่ 2 (ตัวหนังสือ) เป็นข้อมูลที่โปรแกรมใช้งานได้ กันแตก
         ov_json = safe_json_loads(
-            res2.choices[0].message.content,
-            {"overview": "", "key_points": [], "data_points": []},
+            res2.choices[0].message.content,                         # คำตอบของ AI ครั้งที่ 2
+            {"overview": "", "key_points": [], "data_points": []},   # ค่าสำรองถ้าแปลงไม่ได้
         )
 
         return {
@@ -407,60 +456,82 @@ overview ต้องกล่าวถึงทุกเรื่องหล�
 
 
     # ---------------- entry point ----------------
-    @staticmethod
-    def summarize(context: str, uid: str) -> Dict[str, Any]:
-        ctx_raw = (context or "").strip()
-        if not ctx_raw:
+    @staticmethod 
+    def summarize(context: str, uid: str) -> Dict[str, Any]:  # รับข้อความ + ID ผู้ใช้ คืนผลสรุปเป็น dict
+
+        ctx_raw = (context or "").strip() # ถ้าไม่มีข้อความมาใช้ "" แทน แล้วตัดช่องว่างกับบรรทัดว่างหัวท้ายทิ้ง
+
+        # ไม่มีเนื้อหาเลย → ตอบ error 400 กลับไป
+        if not ctx_raw: 
             raise HTTPException(400, "context ว่าง")
 
-        ctx = clean_text(ctx_raw)  # ไม่ตัดทิ้งแล้ว — ใช้ทั้งเอกสาร
-        print(f"[TIME] {'--- summarize เริ่ม':<22} {'':>7}  | {len(ctx)} ตัวอักษร", flush=True)
-        with timed("sum: chunking", ""):
-            chunks = build_chunks(ctx)
-        if not chunks:
+        ctx = clean_text(ctx_raw)  # จัดข้อความให้เรียบร้อยก่อนใช้งาน
+
+        print(f"[TIME] {'--- summarize เริ่ม':<22} {'':>7}  | {len(ctx)} ตัวอักษร", flush=True) #Log 
+
+        with timed("sum: chunking", ""): # จับเวลาการแบ่งก้อน แล้วพิมพ์ลง log
+
+            chunks = build_chunks(ctx) # แบ่งเอกสารเป็นก้อน
+
+
+        if not chunks:  # แบ่งแล้วไม่ได้ก้อนเลย 
             raise HTTPException(422, "เอกสารสั้นเกินไป")
 
         try:
-            if len(chunks) == 1:
-                # เอกสารสั้น — ใช้วิธีเดิม (คุณภาพดีที่สุดสำหรับไฟล์เล็ก)
-                with timed("sum: single", f"{len(ctx)} ตัวอักษร"):
-                    result = SummarizeService._summarize_single(chunks[0])
+
+            # แบ่งแล้วได้ก้อนเดียว = เอกสารสั้น ใช้วิธีเดิม: ให้ AI อ่านทั้งเอกสารในรอบเดียว
+            if len(chunks) == 1: 
+                with timed("sum: single", f"{len(ctx)} ตัวอักษร"): # จับเวลาไว้ log "[TIME] sum: single   4.20s | 8500 ตัวอักษร"
+                    result = SummarizeService._summarize_single(chunks[0]) # ส่งก้อนเดียวนั้นไปสรุป
+
+            # เอกสารยาว มีหลายก้อน — Map-Reduce
             else:
-                # เอกสารยาว — Map-Reduce
-                total = len(chunks)
-                with timed("sum: map", f"{total} ก้อน / พร้อมกัน {min(total, 10)}"):
-                    with ThreadPoolExecutor(max_workers=min(total, 10)) as pool:
-                        parts = list(
+                total = len(chunks) # มีทั้งหมดกี่ก้อน
+
+                with timed("sum: map", f"{total} ก้อน / พร้อมกัน {min(total, 10)}"): # จับเวลา
+                    with ThreadPoolExecutor(max_workers=min(total, 10)) as pool:   # เตรียมผู้ช่วยทำงานพร้อมกัน (เท่าจำนวนก้อน แต่ไม่เกิน 10)
+
+                        # แจกก้อนให้ผู้ช่วยคนละก้อน ส่งไปให้ AI สรุป แล้วเก็บผลทั้งหมดไว้ใน parts
+                        parts = list( 
                             pool.map(
-                                lambda t: SummarizeService._map_one_chunk(t[1], t[0], total),
-                                [(i + 1, c) for i, c in enumerate(chunks)],
+                                lambda t: SummarizeService._map_one_chunk(t[1], t[0], total), # งานของผู้ช่วย 1 คนส่งให้ Ai สรุป : สรุป 1 ก้อน (t[1] = เนื้อหาก้อนนั้น, t[0] = เลขลำดับ)
+                                [(i + 1, c) for i, c in enumerate(chunks)],                   # รายการงาน: ใส่เลขลำดับให้แต่ละก้อน [(1, ก้อน1), (2, ก้อน2), ...]
                             )
                         )
-                n_sec = sum(len(p.get("sections", [])) for p in parts)
-                with timed("sum: reduce", f"รวม {n_sec} หัวข้อย่อย"):
-                    result = SummarizeService._reduce(parts, total)
 
+                n_sec = sum(len(p.get("sections", [])) for p in parts) # นับว่าทุกก้อนรวมกันได้หัวข้อย่อยกี่หัวข้อ (ใช้แค่แสดงใน log)
+                
+                # ส่งสรุปของทุกก้อนให้ AI รวมเป็นสรุปเดียว (จับเวลาด้วย)
+                with timed("sum: reduce", f"รวม {n_sec} หัวข้อย่อย"):  # จับเวลา ลง Log
+                    result = SummarizeService._reduce(parts, total) # ส่งสรุปแต่ละก้อน ให้ ai สรุปอีกรอบ Reduce
+
+
+
+            # สำเร็จ จดบันทึกลง Firestore ว่าผู้ใช้คนนี้สรุปเอกสารไป
             log_user_event(
                 uid,
-                "summaries",
+                "summaries",                        # จดลงสมุดชื่อ "summaries"
                 {
-                    "textLength": len(ctx_raw),
-                    "chunks": len(chunks),
-                    "source": "text",
-                    "status": "success",
-                    "summary": result,
+                    "textLength": len(ctx_raw),     # เอกสารยาวกี่ตัวอักษร
+                    "chunks": len(chunks),          # แบ่งได้กี่ก้อน
+                    "source": "text",               
+                    "status": "success",            # สำเร็จ
+                    "summary": result,              # ผลสรุปทั้งหมด
                 },
             )
-            return result
+            return result                           # ส่งผลสรุปกลับไปให้หน้าเว็บ
+            
         except HTTPException:
             raise
-        except Exception as e:
-            try:
+
+        except Exception as e: # error ที่ไม่ได้คาดไว้ (เช่น OpenAI ล่ม, โค้ดพัง)
+            try:               
+                # จดบันทึกลง Firestore ว่าล้มเหลว เพราะอะไร
                 log_user_event(
                     uid,
                     "summaries",
                     {"textLength": len(ctx_raw), "source": "text", "status": "error", "errorMessage": str(e)},
                 )
-            except Exception:
+            except Exception: #Error นอกเหนือจากนี้
                 pass
-            raise HTTPException(500, f"Summarize failed: {e}") from e
+            raise HTTPException(500, f"Summarize failed: {e}") from e # ตอบหน้าเว็บว่า error 500 สรุปไม่สำเร็จ

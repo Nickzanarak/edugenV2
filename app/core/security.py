@@ -37,16 +37,18 @@ def _verify_bearer_token(token: str) -> str:
 
 
 def get_current_user(
-    request: Request,
-    cred: Optional[HTTPAuthorizationCredentials] = Security(security),
+    request: Request, # ข้อมูล request ทั้งหมด (ใช้อ่าน header เพิ่มเติม)
+    cred: Optional[HTTPAuthorizationCredentials] = Security(security), # ดึง token จาก header Authorization: Bearer
 ) -> str:
-    """Verify Firebase Bearer token, or fall back to X-User-Id when ALLOW_DEMO_AUTH=true."""
+    # ทางที่ 1: ถ้ามี token ส่งมา ให้ตรวจกับ Firebase ถ้าผ่านจะคืน ID ผู้ใช้
     if cred and cred.credentials:
         return _verify_bearer_token(cred.credentials)
 
+    # ทางที่ 2: ไม่มี token แต่เปิดโหมดทดลอง (ALLOW_DEMO_AUTH=true) ไว้
     if settings.ALLOW_DEMO_AUTH:
         demo_uid = (request.headers.get("X-User-Id") or "demo-user").strip()
         if demo_uid:
             return demo_uid
 
+     # ไม่เข้าทั้งสองทาง: ปฏิเสธด้วย 401 (ยังไม่ได้ยืนยันตัวตน)
     raise HTTPException(401, "Missing or invalid authentication")

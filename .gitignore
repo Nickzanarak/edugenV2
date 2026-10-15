@@ -19,5 +19,6 @@ node_modules/
 .next/
 out/
 
-# ---- report examples from other groups (not ours, keep local) ----
+# ---- report and slide examples from other groups (not ours, keep local) ----
 docs/report-examples/
+docs/slide-examples/
