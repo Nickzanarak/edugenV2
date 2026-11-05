@@ -39,6 +39,9 @@ function extractErrorMessage(body: unknown, fallback: string): string {
   return fallback;
 }
 
+// ส่งไฟล์ไปให้ Backend     ฟังก์ชันกลางสำหรับส่งข้อมูลไปหลังบ้าน แนบบัตรผ่านให้อัตโนมัติ แล้วส่งคำตอบกลับมา ถ้าพังจะแจ้ง error 
+// 1) เตรียมหัวซอง: แนบบัตรผ่าน (token) ถ้ามี / ถ้าส่ง JSON ก็บอกชนิดและแปลงเป็นข้อความ , 2) ส่งไปที่ ที่อยู่ Backend + path (เช่น /pdf/extract)
+// 3) ถ้า Backend ตอบว่าผิดพลาด → ดึงข้อความ error มาโยนเป็น ApiError (มีรหัส เช่น 401, 422) , 4) ถ้าสำเร็จ → ตอบเป็น JSON ก็แกะคืนให้ ถ้าไม่ใช่ (เช่นไฟล์) คืนคำตอบดิบไป
 export async function apiFetch<T = unknown>(
   path: string,
   options: RequestInit & { auth?: AuthHeaders; json?: unknown } = {},

@@ -11,7 +11,7 @@ export function PdfUploader({
         type="file"
         accept="application/pdf" // จำกัดให้เลือกได้เฉพาะไฟล์ PDF
         aria-label="เลือกไฟล์ PDF" // ข้อความสำหรับ screen reader
-        onChange={(e) => onUpload(e.target.files?.[0] || null)} // เอาไฟล์แรกที่เลือกส่งให้ onUpload ถ้าไม่มีส่ง null
+        onChange={(e) => onUpload(e.target.files?.[0] || null)} // เอาไฟล์แรกที่เลือกส่งให้ onUpload ถ้ายกเลิก null
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
       />
       {/* หน้าตาปุ่ม*/}

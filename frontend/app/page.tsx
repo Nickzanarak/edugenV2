@@ -262,14 +262,14 @@ export default function Home() {
     setQaHistory(item.qa_history || []);
   }, [restoreFromHistory, setQaHistory]);
 
+
+  // (รับไฟล์ PDF จาก User)
   const uploadPdf = async (file: File | null) => {
-    // เช็คสิทธิ์ก่อนเริ่มทำอะไร ถ้ายังไม่ได้เข้าสู่ระบบให้อยู่หน้าเดิม
-    // (เดิมเปลี่ยนไปหน้าทำงานก่อนแล้วค่อย 401 ทำให้ผู้ใช้ค้างอยู่หน้าว่างเปล่า)
+    // เช็คสิทธิ์ก่อนเริ่มทำอะไร ถ้ายังไม่ได้เข้าสู่ระบบให้อยู่หน้าเดิม  (เดิมเปลี่ยนไปหน้าทำงานก่อนแล้วค่อย 401 ทำให้ผู้ใช้ค้างอยู่หน้าว่างเปล่า)
     if (file && !canUseProtectedApi(!!currentUser)) { //ถ้ามีไฟล์แต่ยังไม่ได้ล็อกอิน ให้เปิดหน้าต่างล็อกอิน แล้วหยุดตรงนี้ (return = จบฟังก์ชัน)
       setLoginRequired(true);
       return;
     }
-
 
     setPdf(file); setPdfText(""); setHiddenContext(""); // เก็บไฟล์ที่เลือก  ,  ล้างข้อความที่อ่านจาก PDF ตัวก่อน  ,  ล้างข้อมูลเบื้องหลังที่ใช้ส่งให้ AI  
 
@@ -296,21 +296,19 @@ export default function Home() {
       );
     }
 
-    //ช่วงนี้คือ ส่งไฟล์ PDF ไปให้ backend อ่านข้อความ แล้วเอาผลลัพธ์มาใช้ต่อ ต่อจากโค้ดช่วงก่อนหน้า
-
+    //(ส่งไฟล์ไปให้ Backend) อ่านข้อความ แล้วเอาผลลัพธ์มาใช้ต่อ ต่อจากโค้ดช่วงก่อนหน้า
     if (!file) return; // ถ้าไม่มีไฟล์ (เช่น ผู้ใช้กดยกเลิก) หยุดตรงนี้
-
     try {
       // แพ็กไฟล์ใส่ FormData (รูปแบบที่ใช้ส่งไฟล์ผ่าน HTTP) โดยตั้งชื่อฟิลด์ว่า "pdf"
       const fd = new FormData(); fd.append("pdf", file);
 
       // ส่งไฟล์ไปที่ API /pdf/extract พร้อม header ยืนยันตัวตน
-      const raw = await apiFetch<unknown>("/pdf/extract", { method: "POST", auth: authHeader, body: fd });
+      const raw = await apiFetch<unknown>("/pdf/extract", { method: "POST", auth: authHeader, body: fd }); //(บรรทัดนี้คือส่งไฟล์ไปให้ B แล้วรอจนกว่าจะได้คำตอบ)
 
-      // ตรวจว่าข้อมูลที่ได้กลับมามีรูปแบบถูกต้องตาม PdfExtractSchema
+      // ตรวจว่าข้อมูลที่ได้กลับมามีรูปแบบถูกต้องตาม PdfExtractSchema (parseApi เช็กว่าคำตอบมีช่อง text จริง) (บรรทัดนี้คือ Backend ตอบกลับมาแล้ว)
       const json = parseApi(PdfExtractSchema, raw, "pdf extract");
 
-      setPdfText(json.text); // เก็บข้อความที่อ่านได้จาก PDF
+      setPdfText(json.text); // เก็บข้อความที่อ่านได้จาก PDF ไว้
       resetQuiz(); // ล้างแบบทดสอบของไฟล์เก่า
       await ensureTopics(); // เตรียมหัวข้อของเนื้อหา
     }

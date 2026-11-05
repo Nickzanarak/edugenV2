@@ -78,10 +78,10 @@ def _describe_page_with_vision(png_b64: str, page_no: int) -> str:
         return ""
 
 
-# สร้าง API แบบ POST ที่ path /extract (รวมกับ prefix ของ router จะกลายเป็น /pdf/extract)
+#  (Backend ตรวจสอบไฟล์) สร้าง API แบบ POST ที่ path /extract (รวมกับ prefix ของ router จะกลายเป็น /pdf/extract)
 @router.post("/extract")
 async def pdf_extract(
-    pdf: UploadFile = File(...), # รับไฟล์จากฟิลด์ชื่อ "pdf" ห้ามว่าง
+    pdf: UploadFile = File(...),           # รับไฟล์จากฟิลด์ชื่อ "pdf" ห้ามว่าง
     uid: str = Depends(get_current_user)): # ตรวจบัตรผ่านก่อน ถ้าผ่านจะได้ ID ของผู้ใช้
 
     # รับเฉพาะไฟล์ที่ลงท้ายด้วย .pdf (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
@@ -102,18 +102,18 @@ async def pdf_extract(
     except Exception:
         raise HTTPException(422, "ไม่สามารถเปิดไฟล์ PDF ได้")
 
-    # รอบที่ 1 — วนทุกหน้า: เก็บ text ปกติ + จดว่าหน้าไหนต้องใช้ vision
-    page_texts: list[str] = [] # ข้อความของแต่ละหน้า เรียงตามลำดับหน้า
+    # (วนอ่านไฟล์ทีละหน้า)  รอบที่ 1 — วนทุกหน้า: เก็บ text ปกติ + จดว่าหน้าไหนต้องใช้ vision
+    page_texts: list[str] = []               # ข้อความของแต่ละหน้า เรียงตามลำดับหน้า
     vision_jobs: list[tuple[int, str]] = []  # (เลขหน้า, รูปของหน้านั้นแบบ base64) ประมาณแบบว่า (2, "iVBORw0KGgo...")
 
     try:
         # เริ่มจับเวลา สำหรับทดลอง Log
         _t_scan = __import__("time").perf_counter()
 
-        for i in range(doc.page_count): #เริ่มวนจากหน้า 1 ของไฟล์ PDF
+        for i in range(doc.page_count): # เริ่มวนจากหน้า 1 ของไฟล์ PDF
             page = doc.load_page(i)
 
-            page_texts.append(page.get_text() or "")# type: ignore   ดึงข้อความในหน้านี้ ถ้าไม่มีใช้ "" แทน
+            page_texts.append(page.get_text() or "") # type: ignore   ดึงข้อความในหน้านี้ ถ้าไม่มีใช้ "" แทน
             
             if _page_has_large_image(page): # ถ้าหน้านี้มีรูปใหญ่ 
                 vision_jobs.append((i, _render_page_png_b64(page))) # แปลงทั้งหน้าเป็นรูป PNG (base64) เก็บไว้ส่งให้ AI อ่านภาพ
@@ -128,7 +128,7 @@ async def pdf_extract(
         raise HTTPException(422, "ไม่สามารถอ่านเนื้อหาในไฟล์ได้")
 
 
-    # รอบที่ 2 — ยิง vision หลายหน้าพร้อมกัน (แบบเร็ว) โดยจำกัดจำนวนพร้อมกันด้วย semaphore
+    # (ส่งให้ AI อ่านหน้าที่มีรูป) รอบที่ 2 — ยิง vision หลายหน้าพร้อมกัน (แบบเร็ว) โดยจำกัดจำนวนพร้อมกันด้วย semaphore
     if vision_jobs: # (ถ้ามีการที่จะต้องเตรียมส่ง Vision)
         sem = asyncio.Semaphore(min(len(vision_jobs), 20))# จำกัดให้ส่งพร้อมกันได้ไม่เกิน 20 หน้า
 
@@ -157,13 +157,13 @@ async def pdf_extract(
 
     doc.close()
 
-    #ติดป้ายเลขหน้าให้ทุกหน้า และทิ้งหน้าที่ว่างเปล่า
+    # (แปะเลขหน้าของแต่ละหน้า) ติดป้ายเลขหน้าให้ทุกหน้า และทิ้งหน้าที่ว่างเปล่า
     labeled = [f"[หน้า {i + 1}]\n{t}" for i, t in enumerate(page_texts) if t.strip()]
 
-    #เอาทุกหน้ามาต่อกัน โดยเว้นบรรทัดคั่นระหว่างหน้า แล้วทำความสะอาดข้อความ
+    # (จะเก็บข้อความส่งไปหน้าเว็บ) เอาทุกหน้ามาต่อกัน เป็นก้อนเดียว โดยเว้นบรรทัดคั่นระหว่างหน้า แล้วทำความสะอาดข้อความ
     text = clean_text("\n\n".join(labeled))
 
     #ถ้าต่อกันแล้วไม่มีอะไรเลย แปลว่าไฟล์นี้อ่านไม่ออกทั้งไฟล์ ให้แจ้ง error
     if not text:
         raise HTTPException(422, "ไม่สามารถอ่านข้อความได้ (อาจเป็นไฟล์สแกน)")
-    return {"text": text}
+    return {"text": text} #ส่งกลับไปที่หน้าเว็บ แบบ JSON
