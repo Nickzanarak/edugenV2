@@ -28,10 +28,10 @@ class QAIn(BaseModel):
     question: str
 
 class SummarizeOut(BaseModel):
-    overview: str
-    key_points: List[str]
-    sections: List[Dict[str, str]]
-    data_points: List[Dict[str, str]]
+    overview: str                       # ภาพรวม = ข้อความ
+    key_points: List[str]               # ประเด็นสำคัญ = รายการข้อความ
+    sections: List[Dict[str, str]]      # หัวข้อย่อย = รายการกล่อง {title, summary}
+    data_points: List[Dict[str, str]]   # ตัวเลขสำคัญ = รายการกล่อง {label, value, unit}
 
 class TopicsOut(BaseModel):
     topics: List[str]

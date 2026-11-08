@@ -106,6 +106,7 @@ class SummarizeService:
 
         return out
 
+    # (prompt สรุปแต่ละก้อนพร้อมกัน)
     # ---------------- MAP: สรุปทีละก้อน ----------------
     @staticmethod
     def _map_one_chunk(chunk: str, idx: int, total: int) -> Dict[str, Any]:
@@ -190,7 +191,7 @@ class SummarizeService:
             print(f"[ERROR] map chunk {idx}/{total} ล้มเหลว: {type(e).__name__}: {e}", flush=True) # พิมพ์ลง log ว่าก้อนไหนพัง และพังเพราะอะไร จะได้ตามหาสาเหตุได้
             return {"sections": [], "key_points": [], "data_points": []} # ส่งผลว่างกลับไป ให้ก้อนอื่นทำงานต่อได้
 
-    # ---------------- REDUCE: รวมสรุปย่อย ----------------
+    # ---------------- REDUCE: รวมสรุปย่อย ---------------- (Reduce : รวมบทสรุปย่อย)
     @staticmethod
     def _reduce(parts: List[Dict[str, Any]], total_chunks: int) -> Dict[str, Any]:
         """รวมสรุปย่อยทุกก้อน — เน้นจัดระเบียบ ไม่ใช่ย่อซ้ำ"""
@@ -201,9 +202,9 @@ class SummarizeService:
 
         # ไล่ดูผลทีละก้อน แล้วเทของแต่ละอย่างลงกองของมัน
         for p in parts:
-            all_sections.extend(p.get("sections", []))
-            all_keys.extend(p.get("key_points", []))
-            all_dps.extend(p.get("data_points", []))
+            all_sections.extend(p.get("sections", []))   # กองหัวข้อ
+            all_keys.extend(p.get("key_points", []))     # กองประเด็นสำคัญ
+            all_dps.extend(p.get("data_points", []))     # กองตัวเลข
 
         # แปลง กองหัวข้อ + กองประเด็นสำคัญ เป็นตัวหนังสือ JSON เพื่อเอาไปแปะลงใน prompt
         merged_input = json.dumps(
@@ -214,7 +215,7 @@ class SummarizeService:
         # ส่ง data_points ดิบทั้งหมดให้ AI คัดเลือก (ตอนนี้ AI เห็นภาพรวมทั้งไฟล์แล้ว)
         dps_input = json.dumps(all_dps, ensure_ascii=False)
 
-        # ปริมาณผลลัพธ์แปรผันตามความยาวเอกสาร
+        # ปริมาณผลลัพธ์แปรผันตามความยาวเอกสาร (คำนวณว่าผลสรุปควรยาวแค่ไหน ตามจำนวนก้อน)
         # UI แสดงแบบพับเก็บได้ จึงเพิ่มจำนวนหัวข้อให้ครอบคลุมทุกเรื่องในเอกสารได้
         target_sections = max(6, min(16, total_chunks * 2)) # เป้าจำนวนหัวข้อ: ก้อนละ 2 หัวข้อ (อย่างน้อย 6, ไม่เกิน 16)
         overview_sentences = max(3, min(6, total_chunks + 1)) # ภาพรวมยาวกี่ประโยค: จำนวนก้อน + 1 (อย่างน้อย 3, ไม่เกิน 6)
@@ -224,6 +225,7 @@ class SummarizeService:
         topic_count = len(all_sections) # ทุกก้อนรวมกันได้หัวข้อดิบกี่หัวข้อ
         min_sections = max(4, min(target_sections, int(topic_count * 0.4))) # หัวข้อขั้นต่ำ: 40% ของหัวข้อดิบ (กัน AI ยุบจนเรื่องหาย)
 
+        # (prompt Reduce : รวมบทสรุปย่อย)
         prompt = f"""
 ด้านล่างคือบทสรุปย่อยจากเอกสารฉบับเดียวกันที่ถูกแบ่งอ่านเป็น {total_chunks} ส่วน
 หน้าที่ของคุณคือ "รวบรวมและจัดระเบียบ" ไม่ใช่ย่อซ้ำให้สั้นลง
@@ -313,7 +315,6 @@ unit ต้องเป็น "หน่วยจริง" สั้น ๆ เ
 {dps_input}
 """
         try:
-
             # ถาม AI: รวมผลของทุกก้อนเป็นสรุปฉบับสุดท้าย
             r = client.chat.completions.create(
                 model=AI_MODEL,
@@ -377,18 +378,19 @@ unit ต้องเป็น "หน่วยจริง" สั้น ๆ เ
         #_reduce คืนค่า ผลลัพธ์ ใน summarize() แล้ว จดลง log ใน Firestore แล้ว ส่งกลับไปให้หน้าเว็บแสดงผล
 
     # ---------------- ทางเดิม: เอกสารสั้น ----------------
-    #_summarize_single — สรุปเอกสารสั้น (มีก้อนเดียว) ในรอบเดียว ใช้ตอนแบ่งเอกสารแล้วได้แค่ 1 ก้อน
+    # (สรุปครั้งเดียว) _summarize_single — สรุปเอกสารสั้น (มีก้อนเดียว) ในรอบเดียว ใช้ตอนแบ่งเอกสารแล้วได้แค่ 1 ก้อน
     @staticmethod
     def _summarize_single(ctx: str) -> Dict[str, Any]:
 
+        #เดี่ยวกลับมาดูจุดนี้หน่อยไม่รู้ว่ายังจำเป็นจะต้องหั่นอีกไหม เอาจริงๆให้ AI เลือกหัวข้อย่อยให้เลยก็ได้
         sent_items = numbered_sentences(ctx, max_sentences=800) # หั่นเนื้อหาเป็นประโยค แล้วใส่เลขกำกับ (เก็บไม่เกิน 800 ประโยค) ได้ [{"id": 1, "text": "หัวใจมี 4 ห้อง"},{"id": 2, "text": "ห้องบนเรียกว่าเอเทรียม"}]
-
         # หั่นแล้วไม่ได้ประโยคเลย → ไม่มีอะไรให้สรุป
         if not sent_items:
             raise HTTPException(422, "เอกสารสั้นเกินไป")
 
         sent_block = "\n".join(f"[{it['id']}] {it['text']}" for it in sent_items) # เรียงประโยคเป็นข้อๆ บรรทัดละประโยค เช่น "[1] หัวใจมี 4 ห้อง "
 
+        #ถาม Ai ขอหัวข้อย่อย
         prompt_sections = f"""
 คุณเป็นครูบรรณาธิการสรุปเอกสารแบบยึดตามข้อความเท่านั้น
 - อ่านเฉพาะ "รายการประโยคมีเลขกำกับ"
@@ -455,43 +457,45 @@ overview ต้องกล่าวถึงทุกเรื่องหล�
         }
 
 
-    # ---------------- entry point ----------------
+    
+    # ---------------- entry point ----------------   (เมื่อผู้ใช้กดสรุปเนื้อหา)
     @staticmethod 
     def summarize(context: str, uid: str) -> Dict[str, Any]:  # รับข้อความ + ID ผู้ใช้ คืนผลสรุปเป็น dict
 
-        ctx_raw = (context or "").strip() # ถ้าไม่มีข้อความมาใช้ "" แทน แล้วตัดช่องว่างกับบรรทัดว่างหัวท้ายทิ้ง
-
-        # ไม่มีเนื้อหาเลย → ตอบ error 400 กลับไป
+        #เช็คว่ามีเนื้อหาไหม (ที่จริงหน้าเว็บเช็คไปแล้วทีนึง ให้หลังบ้านเช็คซ้ำอีกครั้ง เผื่อยิงผ่าน API มา)
+        ctx_raw = (context or "").strip() # ถ้าไม่มีข้อความมา ใช้ "" แทน แล้วตัดช่องว่างกับบรรทัดว่างหัวท้ายทิ้ง
+        # ถ้าไม่มีเนื้อหาเลย ตอบ error 400 กลับไป
         if not ctx_raw: 
             raise HTTPException(400, "context ว่าง")
 
+        # ถ้ามีเนื้อหามาจะเอามาทำความสะอาดข้อความ
         ctx = clean_text(ctx_raw)  # จัดข้อความให้เรียบร้อยก่อนใช้งาน
 
         print(f"[TIME] {'--- summarize เริ่ม':<22} {'':>7}  | {len(ctx)} ตัวอักษร", flush=True) #Log 
 
+
         with timed("sum: chunking", ""): # จับเวลาการแบ่งก้อน แล้วพิมพ์ลง log
 
-            chunks = build_chunks(ctx) # แบ่งเอกสารเป็นก้อน
+            chunks = build_chunks(ctx) # แบ่งเอกสารเป็นก้อน (= build_chunks_semantic ทั้งชั้นแบ่งก้อนทำงานในบรรทัดนี้)
 
 
         if not chunks:  # แบ่งแล้วไม่ได้ก้อนเลย 
             raise HTTPException(422, "เอกสารสั้นเกินไป")
 
+        #(รายการก้อน)(มีมากกว่า 1 ก้อนไหม)
         try:
-
             # แบ่งแล้วได้ก้อนเดียว = เอกสารสั้น ใช้วิธีเดิม: ให้ AI อ่านทั้งเอกสารในรอบเดียว
             if len(chunks) == 1: 
                 with timed("sum: single", f"{len(ctx)} ตัวอักษร"): # จับเวลาไว้ log "[TIME] sum: single   4.20s | 8500 ตัวอักษร"
                     result = SummarizeService._summarize_single(chunks[0]) # ส่งก้อนเดียวนั้นไปสรุป
 
-            # เอกสารยาว มีหลายก้อน — Map-Reduce
+            # (สรุปแต่ละก้อนพร้อมกัน) เอกสารยาว มีหลายก้อน — Map-Reduce
             else:
                 total = len(chunks) # มีทั้งหมดกี่ก้อน
-
                 with timed("sum: map", f"{total} ก้อน / พร้อมกัน {min(total, 10)}"): # จับเวลา
                     with ThreadPoolExecutor(max_workers=min(total, 10)) as pool:   # เตรียมผู้ช่วยทำงานพร้อมกัน (เท่าจำนวนก้อน แต่ไม่เกิน 10)
 
-                        # แจกก้อนให้ผู้ช่วยคนละก้อน ส่งไปให้ AI สรุป แล้วเก็บผลทั้งหมดไว้ใน parts
+                        # (Map:สรุปแต่ละก้อนพร้อมกัน) แจกก้อนให้ผู้ช่วยคนละก้อน ส่งไปให้ AI สรุป แล้วเก็บผลทั้งหมดไว้ใน parts
                         parts = list( 
                             pool.map(
                                 lambda t: SummarizeService._map_one_chunk(t[1], t[0], total), # งานของผู้ช่วย 1 คนส่งให้ Ai สรุป : สรุป 1 ก้อน (t[1] = เนื้อหาก้อนนั้น, t[0] = เลขลำดับ)
@@ -501,13 +505,13 @@ overview ต้องกล่าวถึงทุกเรื่องหล�
 
                 n_sec = sum(len(p.get("sections", [])) for p in parts) # นับว่าทุกก้อนรวมกันได้หัวข้อย่อยกี่หัวข้อ (ใช้แค่แสดงใน log)
                 
-                # ส่งสรุปของทุกก้อนให้ AI รวมเป็นสรุปเดียว (จับเวลาด้วย)
+                # (Reduce : รวมบทสรุปย่อย) ส่งสรุปของทุกก้อนให้ AI รวมเป็นสรุปเดียว (จับเวลาด้วย)
                 with timed("sum: reduce", f"รวม {n_sec} หัวข้อย่อย"):  # จับเวลา ลง Log
                     result = SummarizeService._reduce(parts, total) # ส่งสรุปแต่ละก้อน ให้ ai สรุปอีกรอบ Reduce
 
 
 
-            # สำเร็จ จดบันทึกลง Firestore ว่าผู้ใช้คนนี้สรุปเอกสารไป
+            # (บันทึกลง Database)และ(ส่งกลับไปแสดงผลที่หน้าเว็บ)  สำเร็จจดบันทึกลง Firestore ว่าผู้ใช้คนนี้สรุปเอกสารไป
             log_user_event(
                 uid,
                 "summaries",                        # จดลงสมุดชื่อ "summaries"

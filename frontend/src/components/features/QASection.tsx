@@ -15,21 +15,26 @@ export function QASection({ qaInput, qaHistory, loading, onInputChange, onAsk }:
         <div className="pl-4 pr-2 text-zinc-500 group-focus-within:text-indigo-400 transition-colors">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
         </div>
+
+        {/* (ผู้ใช้พิมพ์คำถาม) ช่องพิมพ์คำถาม */}
         <input
-          className="flex-1 bg-transparent border-0 py-3 px-2 text-zinc-100 placeholder-zinc-600 focus:outline-none text-base w-full"
-          placeholder="สงสัยตรงไหน? พิมพ์ถาม AI จากเนื้อหาได้เลย..."
-          value={qaInput}
-          onChange={(e) => onInputChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onAsk(); }}
+          className="flex-1 bg-transparent border-0 py-3 px-2 text-zinc-100 placeholder-zinc-600 focus:outline-none text-base w-full"  // หน้าตาช่อง
+          placeholder="สงสัยตรงไหน? พิมพ์ถาม AI จากเนื้อหาได้เลย..."  // ข้อความจาง ๆ ตอนช่องยังว่าง
+          value={qaInput} // แสดงคำถามที่อยู่ในกล่อง qaInput  (ทุกตัวอักษรที่พิมพ์ถูกเก็บไว้ในกล่อง qaInput)
+          onChange={(e) => onInputChange(e.target.value)} // พิมพ์ทีละตัว → เขียนลงกล่อง qaInput (setQaInput ใน page.tsx)
+          onKeyDown={(e) => { if (e.key === "Enter") onAsk(); }} // กด Enter = ส่งคำถาม (เรียก handleAskQA ใน page.tsx)
         />
+
+        {/* ตอนกดส่งทำได้ 2 ทางกดปุ่มส่ง หรือ กด Enter */}
         <button
-          onClick={onAsk}
-          disabled={loading || !qaInput.trim()}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white px-6 py-3 rounded-xl font-semibold transition-all flex items-center gap-2"
+          onClick={onAsk}                          // กดแล้วเรียก onAsk
+          disabled={loading || !qaInput.trim()}    // เงื่อนไขที่ปุ่มกดไม่ได้ (กำลังรอคำตอบอยู่กันกดซ้ำหรือช่องพิมพ์ว่าง)
+          className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white px-6 py-3 rounded-xl font-semibold transition-all flex items-center gap-2" // ตอนกดไม่ได้ ปุ่มเปลี่ยนเป็นสีเทา
         >
           ส่ง
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="-mr-1"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
         </button>
+
       </div>
 
       {qaHistory.length === 0 && (
@@ -47,7 +52,7 @@ export function QASection({ qaInput, qaHistory, loading, onInputChange, onAsk }:
                 <div className="mt-0.5 shrink-0 w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center border border-zinc-700 shadow-sm text-zinc-400">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                 </div>
-                <div className="text-zinc-200 font-medium leading-relaxed mt-0.5">{item.question}</div>
+                <div className="text-zinc-200 font-medium leading-relaxed mt-0.5">{item.question}</div> 
               </div>
               <div className="px-5 py-5 flex items-start gap-4">
                 <div className="mt-0.5 shrink-0 w-8 h-8 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 flex items-center justify-center shadow-sm">

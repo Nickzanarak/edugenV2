@@ -59,7 +59,8 @@ def split_by_pages(text: str) -> List[Tuple[int, str]]:
             pages.append((page_no, body)) # ถ้าหน้าว่างก็ไม่เก็บ
     return pages
 
-#  เป็นแผนสำรองสำหรับแบ่งหน้า ตัวอย่าง: เอกสาร 10 หน้า (หน้าละสั้นๆ) ["หน้า 1-4", "หน้า 5-8", "หน้า 9-10"]   = 3 ก้อน = ถาม AI 3 ครั้ง
+#  กรณีที่เช็คแล้วไม่ได้มากกว่า 3 หน้า จะมาเรียก build_chunks (นับว่าเป็น 1 ก้อน)
+#  เป็นแผนสำรองสำหรับแบ่งหน้า(ถ้าเรียก AI แล้วเรียกไม่ติด หรือ เช็คแล้วหน้าน้อยกว่า 3)    ตัวอย่าง: เอกสาร 10 หน้า (หน้าละสั้นๆ) ["หน้า 1-4", "หน้า 5-8", "หน้า 9-10"]   = 3 ก้อน = ถาม AI 3 ครั้ง
 def build_chunks(
     text: str,
     max_chars: int = CHUNK_CHAR_SIZE,
@@ -121,11 +122,11 @@ def build_chunk_index(chunks: List[str]) -> str:
     ใช้ช่วงหน้า + ตัวอย่างเนื้อหาต้นก้อน (ไม่เสียค่า AI เพิ่ม)
     """
     lines: List[str] = []
-    for i, c in enumerate(chunks, start=1):
-        preview = _PAGE_RE.sub("", c).strip().replace("\n", " ")
-        preview = preview[:INDEX_PREVIEW_CHARS]
-        lines.append(f"[ก้อน {i}] ({chunk_page_range(c)}) {preview}...")
-    return "\n\n".join(lines)
+    for i, c in enumerate(chunks, start=1):                               # ไล่ทีละก้อน นับเลขเริ่มที่ 1
+        preview = _PAGE_RE.sub("", c).strip().replace("\n", " ")          # ลบป้าย [หน้า X] + เปลี่ยนการขึ้นบรรทัดเป็นเว้นวรรค
+        preview = preview[:INDEX_PREVIEW_CHARS]                           # ตัดเอาแค่ 400 ตัวอักษรแรกของก้อน
+        lines.append(f"[ก้อน {i}] ({chunk_page_range(c)}) {preview}...")   # เขียนเป็น 1 รายการ
+    return "\n\n".join(lines) # ต่อทุกรายการ คั่นด้วยบรรทัดว่าง
 
 def sample_across_document(text: str, max_chars: int) -> str:
     """เลือกเนื้อหา "กระจายทั่วทั้งเอกสาร" ให้อยู่ในโควตา max_chars
@@ -187,6 +188,8 @@ def _cache_key(text: str) -> str:
   (3, "บทที่ 2 หัวใจ\nหัวใจมี 4 ห้อง......"),
 ]
 """
+
+#(ทำสารบัญย่อ)
 def build_page_index(pages: List[Tuple[int, str]]) -> str:
     lines = []
     # ไล่ทีละหน้า
@@ -254,9 +257,12 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
     """ให้ AI ดูสารบัญย่อ แล้วบอกว่าหน้าไหนถึงหน้าไหนเป็นเรื่องเดียวกัน
     คืน None ถ้าทำไม่ได้ (ผู้เรียกต้อง fallback ไปใช้การแบ่งตามจำนวนหน้า)
     """
+
+    #เช็คว่ามีมากกว่า 3 หน้าไหม
     pages = split_by_pages(text) # หั่นข้อความกลับเป็นรายหน้า → [(1, "..."), (2, "..."), ...]
     if len(pages) < 3:
-        return None       # หน้าน้อยเกินกว่าจะต้องแบ่งตามเรื่อง
+        return None       # ไม่ต้องแบ่งตามเรื่อง
+
 
     key = _cache_key(text) # ตั้งชื่อให้เอกสารนี้ เอาไว้จำว่าเคยเจอเอกสารนี้หรือยัง
 
@@ -274,6 +280,7 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
         from app.core.config import settings
         from app.services.ai_service import client
 
+        #(ส่งสารบัญย่อไปให้ AI) เขียนคำสั่งแนบสารบัญย่อ
         index_text = build_page_index(pages)
         prompt = f"""
 ด้านล่างคือสารบัญย่อของเอกสาร แสดงเนื้อหาต้นหน้าของแต่ละหน้า
@@ -290,14 +297,19 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
 
 ตอบ (ช่วงหน้าเท่านั้น):
 """
-        # ส่งคำถาม (prompt ที่มีสารบัญย่อ) ไปให้ AI
+        #(ส่งสารบัญย่อไปให้ AI) ส่งคำถาม (prompt ที่มีสารบัญย่อ) ไปให้ AI
         r = client.chat.completions.create(
             model=settings.AI_MODEL,
             messages=[{"role": "user", "content": prompt}],  # ข้อความที่ส่งไปถาม
             temperature=0, # ให้ AI ตอบแบบเดิมทุกครั้ง ไม่ด้นสด
         )
+
+        #สิ่งที่ AI ตอบ:    "1-3, 4-6, 7-8, 9-10"
         raw = (r.choices[0].message.content or "").strip()  # หยิบคำตอบของ AI ออกมา ถ้าไม่มีคำตอบก็ใช้ "" แทน แล้วตัดช่องว่างหัวท้ายทิ้ง
-        groups = _parse_groups(raw, [p for p, _ in pages]) # แปลงคำตอบที่เป็นตัวหนังสือ ให้เป็นช่วงหน้าที่โปรแกรมใช้งานได้ (และซ่อมถ้า AI ตอบผิด)
+        groups = _parse_groups(raw, [p for p, _ in pages])  # แปลงคำตอบที่เป็นตัวหนังสือ ให้เป็นช่วงหน้าที่โปรแกรมใช้งานได้ (และซ่อมถ้า AI ตอบผิด)
+
+        # groups แปลงได้:   groups = [(1, 3), (4, 6), (7, 8), (9, 10)]
+        
 
     except Exception: # ถ้าเกิดปัญหาระหว่างทางระบบจะไปหั่นตามความยาวแทน
         return None
@@ -345,15 +357,20 @@ def build_chunks_semantic(
     """
     groups = detect_topic_groups(text)  #ให้ AI ดูว่าหน้าไหนถึงหน้าไหนเป็นเรื่องเดียวกัน   Ex groups = [(1, 6), (7, 14), (15, 20)]
     
+    #(นับว่าเป็น 1 ก้อน) เช็คแล้วไม่ได้มีมากกว่า 3 หน้า จะเรียกใช้ build_chunks นับเป็นก้อนเดียว
     #ถ้า AI แบ่งตามเรื่องไม่ได้ จะใช้แผนสำรอง หั่นตามความยาว/จำนวนหน้าแทน (โอกาสต่ำแต่ทำกันไว้เผื่อเจ๊ง)
     if not groups:
         return build_chunks(text, max_chars=max_chars)
 
+    #ก่อน pages เป็นรายการเรียงต่อกัน [(1, "อาหาร 5 หมู่..."), (2, "โปรตีน..."), (4, "ออกกำลังกาย...")]
     pages = split_by_pages(text)
     by_no: Dict[int, str] = {}
     for page_no, body in pages:
         by_no[page_no] = body
+    #หลัง by_no เป็นตู้ที่ลิ้นชักติดเลขหน้า {1: "อาหาร 5 หมู่...", 2: "โปรตีน...", 4: "ออกกำลังกาย..."}
+    #ทำเพราะ ตอนจัดก้อน โค้ดต้องหยิบหน้าตามเลข เช่น "ขอหน้า 4" ถ้าเป็นตู้ก็เปิดลิ้นชัก 4 ได้เลย (by_no.get(4)) ไม่ต้องไล่หาทีละอันในรายการ  ถ้าขอหน้าที่ไม่มีลิ้นชัก เช่นหน้า 3 ที่เป็นหน้าว่าง จะได้ None
 
+    #(จัดก้อนตามกลุ่มเรื่อง)
     #เอาช่วงหน้าที่ได้จาก AI เช่น (1,6) ไปประกอบเป็น "ก้อนข้อความ" จริงๆ เพื่อส่งให้ AI สรุปหรือออกข้อสอบ
     chunks: List[str] = [] # กล่องใหญ่ เก็บก้อนที่ทำเสร็จแล้ว 
     """ สมมุติ   groups = [(1, 6), (7, 14), (15, 20)]   # เซลล์ / หัวใจ / ปอด    จะได้ข้อมูลประมาณนี้
@@ -374,6 +391,7 @@ def build_chunks_semantic(
     # ไล่ทีละเรื่อง เช่น (1,6) แล้วต่อด้วย (7,14) ...
     for start, end in groups:               # Ex groups = [(1, 6), (7, 14), (15, 20)]
         buf: List[str] = []                 # ตะกร้าเปล่า ไว้ใส่หน้าของก้อนที่กำลังทำ
+
         buf_len = 0                         # ในตะกร้ามีตัวอักษรแล้วกี่ตัว
         buf_pages = 0                       # ในตะกร้ามีแล้วกี่หน้า
 
@@ -400,5 +418,5 @@ def build_chunks_semantic(
         if buf:
             chunks.append("\n\n".join(buf))
 
-    # ถ้าทำแล้วไม่ได้ก้อนเลย จะ ใช้แผนสำรอง หั่นตามความยาวแทน
+    # ถ้ามีก้อน จะส่ง chunks ออกไป ถ้าทำแล้วไม่ได้ก้อนเลย จะ ใช้แผนสำรอง หั่นตามความยาวแทน
     return chunks or build_chunks(text, max_chars=max_chars)

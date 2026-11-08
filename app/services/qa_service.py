@@ -65,9 +65,12 @@ class QAService:
                 temperature=0,
             )
             raw = (r.choices[0].message.content or "").strip()
-            nums = [int(n) for n in re.findall(r"\d+", raw)]
-            picked = [n for n in nums if 1 <= n <= total][:MAX_PICKED_CHUNKS]
-            return picked or [1]
+
+            #แปลงคำตอบเป็นเลขก้อน
+            nums = [int(n) for n in re.findall(r"\d+", raw)]  # ดึงตัวเลขทุกตัวในคำตอบ
+            picked = [n for n in nums if 1 <= n <= total][:MAX_PICKED_CHUNKS] # เก็บเฉพาะเลขที่มีก้อนจริง เอาไม่เกิน 3 ตัวแรก
+            return picked or [1] # ไม่ได้สักตัว → ใช้ก้อน 1
+
         except Exception:
             # เลือกไม่ได้ → ใช้ก้อนแรกไปก่อน ดีกว่าล้ม
             return [1]
@@ -76,34 +79,44 @@ class QAService:
     def answer(context: str, question: str) -> dict:
         ctx = (context or "").strip()
         q = (question or "").strip()
-        if not ctx or not q:
+
+        if not ctx or not q:  #ถ้าเนื้อหาหรือคำว่าง ตอบ 400 
             raise HTTPException(400, "context/question ว่าง")
 
-        chunks = build_chunks(ctx)
+        #(รายการก้อน)
+        chunks = build_chunks(ctx) #ส่งเนื้อหาไปให้ build_chunks ใน chunking.py
         if not chunks:
             raise HTTPException(400, "context ว่าง")
 
         # เนื้อหาที่ผู้ใช้พิมพ์เองไม่มีป้าย [หน้า X] จึงไม่ควรแสดงแหล่งอ้างอิง
-        # (ต้องเช็คจากข้อความต้นฉบับ เพราะตัวแบ่งก้อนจะใส่ "หน้า 1" ให้อัตโนมัติ)
-        has_page_labels = "[หน้า" in ctx
+        # (ต้องเช็คจากข้อความต้นฉบับ เพราะตัวแบ่งก้อนจะใส่ "หน้า 1" ให้อัตโนมัติ)  
+        has_page_labels = "[หน้า" in ctx  #จดไว้ว่าเนื้อหามีป้ายหน้าไหม (มาจาก PDF → มีป้าย → True) (พิมพ์เอง → ไม่มีป้าย → False) ถ้าพิมเนื้อหาเข้ามาเองจะไม่แสดงป้ายอิงอิง
 
+        #(มีมากกว่า 1 ก้อนไหม)
+        #กรณีที่มีแค่ก้อนเดียว (ใช้ทั้งก้อนนั้น)
         if len(chunks) == 1:
             # เอกสารสั้น — ส่งทั้งหมดเลย ไม่ต้องเลือกก้อน
-            source_text = chunks[0]
-            source_note = chunk_page_range(chunks[0])
+            source_text = chunks[0] # chunks มีตัวเดียว คือตัวที่ 0
+            source_note = chunk_page_range(chunks[0]) #อ่านช่วงหน้าของก้อน เก็บไว้เป็นหน้าอ้างอิงสำรอง  (chunk_page_range หาป้าย [หน้า X] ทุกตัวในก้อน แล้วเอาเลขน้อยสุดกับมากสุด)
+
+        #กรณีที่มีมากกว่า 1 ก้อน (ทำสารบัญของก้อน)
         else:
-            # เอกสารยาว — ให้ AI เลือกก้อนที่เกี่ยวข้องก่อน แล้วค่อยส่ง "เนื้อหาเต็ม" ของก้อนนั้นไปตอบ
-            index_text = build_chunk_index(chunks)
+            # เอกสารยาว ให้ AI เลือกก้อนที่เกี่ยวข้องก่อน แล้วค่อยส่ง "เนื้อหาเต็ม" ของก้อนนั้นไปตอบ
+            index_text = build_chunk_index(chunks) #ทำสารบัญย่อ คัดออกมา 400 ตัวแรกของแต่ละก้อน
+
+            #(ส่งให้ AI เลือกก้อนที่เกี่ยวกับคำถามนั้น)
             with timed("qa: pick chunks", f"จาก {len(chunks)} ก้อน"):
-                picked = QAService._pick_chunks(index_text, q, len(chunks))
-            selected = [chunks[i - 1] for i in picked]
-            source_text = "\n\n".join(selected)
-            ranges = ", ".join(chunk_page_range(c) for c in selected)
-            source_note = ranges
+                picked = QAService._pick_chunks(index_text, q, len(chunks))  # ส่งสารบัญ + คำถาม + จำนวนก้อน
 
-        # รายการเลขหน้าที่อยู่ในเนื้อหาที่ส่งให้ AI จริง — ใช้ตรวจว่า AI ไม่ได้มั่วเลขหน้า
-        pages_in_source = {int(n) for n in _PAGE_NUM_RE.findall(source_text)}
+            selected = [chunks[i - 1] for i in picked]  # Ex ก้อน 2 = chunks[1] (รายการนับจาก 0)
+            source_text = "\n\n".join(selected)         # ต่อเนื้อหาเต็มของทุกก้อนที่เลือก
+            ranges = ", ".join(chunk_page_range(c) for c in selected) # หาช่วงหน้าของทุกก้อนที่เลือก แล้วต่อกันด้วย ", "
+            source_note = ranges                        # เก็บไว้ในชื่อ source_note
 
+        # รายการเลขหน้าที่อยู่ในเนื้อหาที่ส่งให้ AI จริง — ใช้ตรวจว่า AI ไม่ได้มั่วเลขหน้า (AI ตอบจากเนื้อหาเต็ม + ระบุหน้าอ้างอิง)
+        pages_in_source = {int(n) for n in _PAGE_NUM_RE.findall(source_text)} #จดว่าเนื้อหาที่จะส่งมีหน้าไหนบ้าง (ดึงเลขจากป้าย [หน้า X] ทุกตัวใน source_text ถ้าส่งก้อน 2 ไป จะได้ {4, 5, 6} เก็บไว้ตรวจว่า AI มั่วเลขหน้าไหม)
+
+        #(prompt ให้ AI ตอบจากเนื้อหาเต็ม)
         prompt = f"""
 ตอบคำถามโดยอ้างอิง "เฉพาะ" เนื้อหาที่ให้ด้านล่างเท่านั้น
 - ตอบให้ละเอียด ครบถ้วน อ้างอิงข้อมูลจริงในเนื้อหา
@@ -133,13 +146,16 @@ class QAService:
             # แยกบรรทัด [หน้าอ้างอิง: ...] ออกจากคำตอบ
             # ถ้า AI ระบุหน้ามาถูกต้อง จะใช้เลขหน้านั้นแทนช่วงหน้าทั้งก้อน (แม่นกว่า)
             answer_text, ai_pages = QAService._split_ref_line(raw_answer)
-            valid_pages = [p for p in ai_pages if p in pages_in_source]
+
+            #ตรวจเลขจากที่ AI บอก
+            valid_pages = [p for p in ai_pages if p in pages_in_source] # เก็บเฉพาะหน้าที่มีอยู่จริงในเนื้อหาที่ส่งไป
             if valid_pages:
-                source_note = QAService._format_pages(valid_pages)
+                source_note = QAService._format_pages(valid_pages) # ใช้หน้าที่ AI บอกแทนช่วงหน้าทั้งก้อน
 
             # ไม่มีป้ายหน้าจริง (เช่นผู้ใช้พิมพ์เอง) → ไม่ต้องแสดงแหล่งอ้างอิง
             if not has_page_labels or source_note == "ไม่ระบุหน้า":
                 source_note = ""
-            return {"answer": answer_text, "source": source_note}
+            return {"answer": answer_text, "source": source_note} #ส่งกลับ
+
         except Exception as e:
             raise HTTPException(500, f"QA failed: {e}") from e

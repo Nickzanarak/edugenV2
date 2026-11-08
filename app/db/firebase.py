@@ -32,17 +32,17 @@ def get_firestore_db():
 
 def log_user_event(user_id: str, collection: str, data: dict) -> None:
     db = get_firestore_db()
-    if db is None or firestore is None:
+    if db is None or firestore is None:                  # ต่อฐานข้อมูลไม่ได้ → ข้ามไปเงียบ ๆ
         return
     try:
-        db.collection("users").document(user_id).collection(collection).add(
+        db.collection("users").document(user_id).collection(collection).add(  
             {
-                **data,
-                "createdAt": firestore.SERVER_TIMESTAMP,
+                **data,                                  # ข้อมูลทั้งหมด
+                "createdAt": firestore.SERVER_TIMESTAMP, # เวลาที่บันทึก
             }
         )
     except Exception as e:
-        print(f"[history-log error] {e}")
+        print(f"[history-log error] {e}")                # บันทึกไม่สำเร็จ → พิมพ์ลง log แต่ไม่ทำให้พัง
 
 
 # เก็บ uid ที่บันทึก profile ไปแล้วในรอบนี้ กันเขียนซ้ำทุก request

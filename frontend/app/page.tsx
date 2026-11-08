@@ -205,10 +205,15 @@ export default function Home() {
     setError(msg);
   }, []);
 
+
+  //ต่อจากชั้น 7 หลังจากได้ (ข้อความจากการอ่านไฟล์ PDF)
+  //ข้อความเก็บอยู่ในกล่อง pdfText แล้วถูกรวมเป็น context
   const context = useMemo(() => {
-    const manualInput = [text.trim(), pdfText.trim()].filter(Boolean).join("\n");
+    const manualInput = [text.trim(), pdfText.trim()].filter(Boolean).join("\n"); //เอาข้อความที่พิมพ์กับข้อความจาก PDF มาต่อกัน ตัวไหนว่างก็ข้ามไป
     return manualInput || hiddenContext;
   }, [text, pdfText, hiddenContext]);
+
+
 
   const quiz = useQuiz(context, authHeader);
   const bank = useBank(authHeader);
@@ -410,13 +415,14 @@ export default function Home() {
   }, [addMoreQuiz, persistQuizUpdate, handleErrorText]);
 
   const handleAskQA = useCallback(() => {
-    askQA(context, {
-      setError: handleErrorText,
-      setLoading,
-      onNotice: (msg) => showToast(msg, "error"),
-      onAnswered: async (newHistory) => {
-        if (!canUseProtectedApi(!!currentUser)) return;
-        if (currentHistoryId) {
+    askQA(context, {                                      // ส่งเนื้อหาทั้งเล่ม (context) ให้ askQA
+      setError: handleErrorText,                          // ถ้าพัง แสดง error (ถ้า 401 เปิดหน้าต่างล็อกอิน)
+      setLoading,                                         // ให้ askQA เปิด/ปิดสถานะกำลังโหลดได้
+      onNotice: (msg) => showToast(msg, "error"),         // ใช้แจ้งเตือน เช่น "กรุณาอัปโหลดไฟล์ PDF..."
+
+      onAnswered: async (newHistory) => {                 // ได้คำตอบแล้ว → บันทึกลงประวัติ
+        if (!canUseProtectedApi(!!currentUser)) return;   // ถ้าไม่ได้ล็อกอิน → ไม่บันทึก
+        if (currentHistoryId) {                           // ถ้าแชทนี้เคยบันทึกแล้ว → อัปเดตของเดิม
           const payload = buildHistoryPayload({
             pdf, currentHistoryId, historyItems, fileId,
             overview, keyPoints, sections, dataPoints,
@@ -426,7 +432,7 @@ export default function Home() {
           });
           await saveHistory.mutateAsync({ currentHistoryId, payload });
           updateLocalHistoryItem({ qa_history: newHistory, answers: answers });
-        } else {
+        } else {                                          // ยังไม่เคยบันทึก → สร้างรายการใหม่
           await persistSessionHistory({ qaHistory: newHistory, score: score !== null ? score : -1 });
         }
       },
@@ -463,6 +469,7 @@ export default function Home() {
     }
   }, [currentUser, handleNewSession]);
 
+  //เมื่อ (ผู้ใช้กดสรุปเนื้อหา)  จะเช็คก่อนส่ง 
   const summarize = async () => {
 
     if (!context) return; // ไม่มีเนื้อหาให้สรุป (ไม่ได้พิมพ์อะไร และไม่ได้อัปโหลด PDF) จะไม่ต้องทำอะไร
@@ -512,6 +519,8 @@ export default function Home() {
       //Authorization: Bearer <บัตรล็อกอิน>
       //{"context": "[หน้า 1] เซลล์...[หน้า 2] ..."}
 
+
+      // ได้รับคำตอบจากการ สรุป ที่ส่งมาจาก Backend แล้ว
       const data = parseApi(SummarizeResponseSchema, raw, "summarize");  // parseApi ตรวจรูปแบบคำตอบมีครบ 4 ช่อง (schemas/api.ts:14)
 
       // เอาผลแต่ละส่วนไปใส่ไว้ในหน้าจอ (คัดเฉพาะของที่ชนิดถูกต้องอีกรอบ)
@@ -796,15 +805,17 @@ export default function Home() {
               </div>
 
               <QASection
-                qaInput={qaInput}
-                qaHistory={qaHistory}
-                loading={loading}
-                onInputChange={setQaInput}
-                onAsk={handleAskQA}
+                //วางช่องถาม-ตอบบนหน้าจอ
+                qaInput={qaInput}           // ให้ช่องพิมพ์แสดงข้อความในกล่อง
+                qaHistory={qaHistory}       // ให้แสดงรายการถาม-ตอบเก่า
+                loading={loading}           // ให้ปิดปุ่มตอนกำลังโหลด
+                onInputChange={setQaInput}  // พิมพ์ทีละตัว → เขียนลงกล่อง qaInput
+                onAsk={handleAskQA}         // กดส่ง / Enter → เรียก handleAskQA
               />
 
               {error && <Card className="border-red-700/50 bg-red-900/20 text-red-200">{error}</Card>}
 
+              {/* เอาผลสรุปลงหน้าจอ */}
               <SummarySection overview={overview} keyPoints={keyPoints} sections={sections} dataPoints={dataPoints} />
 
               <QuizSection

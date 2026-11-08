@@ -23,24 +23,30 @@ export function useQA(authHeader: AuthHeaders) {
       onNotice?: (msg: string) => void;
     },
   ) => {
-    if (!qaInput.trim()) return;
-    if (!context) {
+
+    //เช็คก่อนส่ง
+    if (!qaInput.trim()) return;  // ถ้าไม่ได้พิมพ์คำถาม จะ หยุด
+    if (!context) {               // ถ้ายังไม่มีเอกสาร เตือน แล้วหยุด
       deps.onNotice?.("กรุณาอัปโหลดไฟล์ PDF หรือพิมพ์เนื้อหาก่อนเริ่มถาม");
       return;
     }
 
-    const currentQ = qaInput;
-    deps.setLoading(true);
-    setQaInput("");
+    //ตอนเตรียมตัว
+    const currentQ = qaInput; // จำคำถามไว้
+    deps.setLoading(true);    // เปิดสถานะกำลังโหลด
+    setQaInput("");           // ล้างช่องพิมพ์ทันที
 
+    //ส่งไปหลังบ้าน
     try {
       const raw = await apiFetch<unknown>("/qa", {
         method: "POST",
-        auth: authHeader,
-        json: { context, question: currentQ },
+        auth: authHeader, // บัตรผ่าน
+        json: { context, question: currentQ }, // เนื้อหาทั้งเล่ม + คำถาม
       });
-      const json = parseApi(QAResponseSchema, raw, "qa");
-      const finalAns = json.answer;
+
+      //ได้คำตอบกลับมาจาก Backend แล้ว
+      const json = parseApi(QAResponseSchema, raw, "qa"); // ตรวจช่อง answer
+      const finalAns = json.answer; // หยิบข้อความคำตอบออกมา ไว้แสดงบนหน้าจอและบันทึกลงประวัติ
 
       // อ่านค่า source (ช่วงหน้าที่ AI ใช้ตอบ) จาก response ตรง ๆ
       // ไม่ผ่าน schema เพื่อไม่ต้องแก้ schemas/api.ts
@@ -50,8 +56,9 @@ export function useQA(authHeader: AuthHeaders) {
           ? ((raw as { source: string }).source)
           : "";
 
-      const newHistory = [{ question: currentQ, answer: finalAns, source }, ...qaHistory];
-      setQaHistory(newHistory);
+      //เพิ่มลงรายการถาม-ตอบ
+      const newHistory = [{ question: currentQ, answer: finalAns, source }, ...qaHistory]; // ของใหม่อยู่บนสุด
+      setQaHistory(newHistory); //เปลี่ยนกล่อง  React วาดหน้าจอใหม่
       await deps.onAnswered(newHistory);
     } catch (e) {
       deps.setError(e instanceof Error ? e.message : String(e));
