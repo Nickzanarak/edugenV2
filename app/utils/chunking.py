@@ -258,8 +258,9 @@ def detect_topic_groups(text: str) -> Optional[List[Tuple[int, int]]]:
     คืน None ถ้าทำไม่ได้ (ผู้เรียกต้อง fallback ไปใช้การแบ่งตามจำนวนหน้า)
     """
 
-    #เช็คว่ามีมากกว่า 3 หน้าไหม
+    #(เช็คว่ามีมากกว่า 3 หน้าไหม)
     pages = split_by_pages(text) # หั่นข้อความกลับเป็นรายหน้า → [(1, "..."), (2, "..."), ...]
+    
     if len(pages) < 3:
         return None       # ไม่ต้องแบ่งตามเรื่อง
 

@@ -19,18 +19,20 @@ AI_MODEL = settings.AI_MODEL
 
 def _page_has_large_image(page) -> bool:
     """เช็คว่าหน้านี้มีรูปที่ใหญ่พอจะเป็นเนื้อหา (ไม่ใช่โลโก้/ไอคอน)"""
-    page_area = abs(page.rect.width * page.rect.height)
-    if page_area <= 0:
+    page_area = abs(page.rect.width * page.rect.height) #พื้นที่ทั้งหน้า
+
+    if page_area <= 0:  #หน้าไหนพื้นที่น้อยกว่า 0 คือปกติไม่ทำอะไร (เขียนดักไว้เฉยๆ)
         return False
-    for img in page.get_images(full=True):
+
+    for img in page.get_images(full=True):         #ไล่ดูไฟล์ทุกรูปที่ฝังอยู่ในหน้า
         try:
-            rects = page.get_image_rects(img[0])
+            rects = page.get_image_rects(img[0])   #รูปนี้วางอยู่ตรงไหนและขนาดเท่าไหร่
         except Exception:
             continue
         for r in rects:
-            if abs(r.width * r.height) / page_area >= IMAGE_AREA_THRESHOLD:
-                return True
-    return False
+            if abs(r.width * r.height) / page_area >= IMAGE_AREA_THRESHOLD:     #พื้นที่รูป / พื้นที่หน้า มากกว่า = 15% หรือป่าว
+                return True                                                     #ถ้ามากกว่าจะส่งรูป (True)
+    return False                                                                #ไม่มากกว่าจะไม่ส่ง (False)
 
 
 def _render_page_png_b64(page) -> str:
@@ -115,7 +117,7 @@ async def pdf_extract(
 
             page_texts.append(page.get_text() or "") # type: ignore   ดึงข้อความในหน้านี้ ถ้าไม่มีใช้ "" แทน
             
-            if _page_has_large_image(page): # ถ้าหน้านี้มีรูปใหญ่ 
+            if _page_has_large_image(page):                         # ถ้าหน้านี้มีรูป 
                 vision_jobs.append((i, _render_page_png_b64(page))) # แปลงทั้งหน้าเป็นรูป PNG (base64) เก็บไว้ส่งให้ AI อ่านภาพ
 
         # พิมพ์เวลาที่ใช้ จำนวนหน้า และจำนวนหน้าที่ต้องส่ง vision (Log) 
